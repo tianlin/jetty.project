@@ -534,8 +534,8 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
     private void lockedReleaseEmptyEncryptedOutputBuffer(ReadableBuffer encryptedOutput)
     {
-        assert _encryptedOutput == null;
         assert _lock.isHeldByCurrentThread();
+        assert _encryptedOutput == null;
         if (encryptedOutput != null && encryptedOutput.remaining() == 0L)
             encryptedOutput.release();
         else
@@ -1239,8 +1239,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             {
                                 // We call sslEngine.wrap to try to take bytes from appOuts
                                 // buffers and encrypt them into the _encryptedOutput buffer.
-                                SSLEngineResult[] wrapResultArray = new SSLEngineResult[1];
-
                                 WritableBuffer wb;
                                 if (encryptedOutput == null)
                                 {
@@ -1253,6 +1251,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                 }
                                 try
                                 {
+                                    SSLEngineResult[] wrapResultArray = new SSLEngineResult[1];
                                     wb.readFrom(output ->
                                     {
                                         SSLEngineResult wrapResult1 = wrap(_sslEngine, appOuts, output);
