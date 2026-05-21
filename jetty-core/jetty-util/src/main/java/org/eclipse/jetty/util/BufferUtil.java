@@ -589,6 +589,7 @@ public class BufferUtil
             ReadableBuffer slice = from.slice(from.position(), to.remaining());
             WritableBuffer.wrap(to).put(slice);
             slice.release();
+            from.position(from.position() + filled);
         }
         BufferUtil.flipToFlush(to, pos);
         return filled;
