@@ -1183,6 +1183,11 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     _bytesOut.addAndGet(written);
                                 if (!flushed)
                                     return false;
+                                if (_encryptedOutput.remaining() == 0L)
+                                {
+                                    _encryptedOutput.release();
+                                    _encryptedOutput = null;
+                                }
                             }
                         }
 
