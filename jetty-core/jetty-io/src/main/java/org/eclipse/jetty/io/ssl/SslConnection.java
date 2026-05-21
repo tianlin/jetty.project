@@ -1632,9 +1632,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
             boolean inputsEmpty;
             try (AutoLock ignored = _lock.lock())
             {
-                inputsEmpty =
-                    (_encryptedInput == null || _encryptedInput.remaining() == 0L) &&
-                        (_decryptedInput == null || _decryptedInput.remaining() == 0L);
+                inputsEmpty = _encryptedInput == null && _decryptedInput == null;
             }
             return inputsEmpty && (getEndPoint().isInputShutdown() || isInboundDone());
         }
