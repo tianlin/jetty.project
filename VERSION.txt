@@ -1,3 +1,7 @@
+9.4.60.v20260522cvefix1 - 22 May 2026
+ + Internal backport build for CVE-2025-11143 URI parser hardening
+ + Internal backport build for CVE-2026-2332 chunk extension parser hardening
+
 9.4.58.v20250814 - 14 August 2025
  + 461 Move ServletTester to the test source directory
  + 13261 Improve handling of failed HTTP/2 requests
@@ -11549,4 +11553,3 @@ jetty-1.0 - 01 January 1998
  + Won the Australian Java Programming Contest!
  + HTTP Server
  + Issue tracking application
-
