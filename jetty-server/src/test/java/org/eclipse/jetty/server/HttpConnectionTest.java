@@ -203,6 +203,44 @@ public class HttpConnectionTest
         assertThat(response, not(containsString("id=456")));
     }
 
+    public static Stream<Arguments> badAbsoluteRequestTargets()
+    {
+        return Stream.of(
+            Arguments.of("https>://vulndetector.com/path"),
+            Arguments.of("http://normal.com[user@vulndetector].com/"),
+            Arguments.of("http://[::1]x/"),
+            Arguments.of("http://[::1]@evil.com/")
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("badAbsoluteRequestTargets")
+    public void testBadAbsoluteRequestTargetRejected(String requestTarget) throws Exception
+    {
+        try (StacklessLogging ignored = new StacklessLogging(HttpParser.LOG))
+        {
+            String response = connector.getResponse("GET " + requestTarget + " HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Connection: close\r\n" +
+                "\r\n");
+
+            assertThat(response, containsString("HTTP/1.1 400 Bad Request"));
+            assertThat(response, not(containsString("pathInfo=")));
+        }
+    }
+
+    @Test
+    public void testIpv4MappedIpv6AbsoluteRequestTargetAccepted() throws Exception
+    {
+        String response = connector.getResponse("GET http://[::ffff:127.0.0.1]/path HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Connection: close\r\n" +
+            "\r\n");
+
+        assertThat(response, containsString("HTTP/1.1 200"));
+        assertThat(response, containsString("pathInfo=/path"));
+    }
+
     /**
      * Ensure that excessively large hexadecimal chunk body length is parsed properly.
      */

@@ -1161,6 +1161,37 @@ public class HttpParserTest
     }
 
     @Test
+    public void testBadQuotedChunkExtensionSplitCrLfDoesNotCompleteMessage()
+    {
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+
+        parser.parseNext(BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "1;a=\""));
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertFalse(_early);
+        assertFalse(_messageCompleted);
+
+        parser.parseNext(BufferUtil.toBuffer(
+            "\r\n" +
+                "X\r\n" +
+                "0\r\n" +
+                "\r\n" +
+                "GET /smuggled HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n"));
+
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @Test
     public void testBadChunkMissingChunkDataTerminator()
     {
         ByteBuffer buffer = BufferUtil.toBuffer(
@@ -1223,6 +1254,57 @@ public class HttpParserTest
                 "1;extension=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n" +
                 "X\r\n" +
                 "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler, 128, HttpCompliance.RFC7230);
+        parseAll(parser, buffer);
+
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @Test
+    public void testBadChunkSizeNumericOverflow()
+    {
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "100000000\r\n" +
+                "X\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @Test
+    public void testBadChunkSizeNumericTooLarge()
+    {
+        StringBuilder chunkSize = new StringBuilder();
+        for (int i = 0; i < 129; ++i)
+        {
+            chunkSize.append('0');
+        }
+        chunkSize.append("\r\n");
+
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                chunkSize +
                 "\r\n");
         HttpParser.RequestHandler handler = new Handler();
         HttpParser parser = new HttpParser(handler, 128, HttpCompliance.RFC7230);

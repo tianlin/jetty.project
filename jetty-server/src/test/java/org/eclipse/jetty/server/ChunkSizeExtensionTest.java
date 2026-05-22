@@ -89,6 +89,42 @@ public class ChunkSizeExtensionTest
         assertTrue(response.isEmpty() || response.contains(" 400 ") || !response.contains(" 200 "), response);
     }
 
+    @Test
+    public void testAdvisoryPoCDoesNotSmuggleNextRequest() throws Exception
+    {
+        startServer();
+
+        String request =
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;foo=\"bar\r\n" +
+                "12345\r\n" +
+                "0\r\n" +
+                "\r\n" +
+                "GET /smuggled HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+
+        String response;
+        try (Socket socket = new Socket("localhost", _connector.getLocalPort()))
+        {
+            socket.setSoTimeout(3000);
+            OutputStream output = socket.getOutputStream();
+            output.write(request.getBytes(StandardCharsets.ISO_8859_1));
+            output.flush();
+
+            response = readAvailable(socket.getInputStream());
+        }
+
+        assertThat(_smuggled.get(), is(0));
+        assertThat(response, not(containsString("smuggled")));
+        assertTrue(countResponses(response) < 2, response);
+        assertTrue(response.isEmpty() || response.contains(" 400 ") || !response.contains(" 200 "), response);
+    }
+
     private void startServer() throws Exception
     {
         _server = new Server();

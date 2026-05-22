@@ -133,7 +133,6 @@ public class HttpParser
         EOF_CONTENT,
         CHUNKED_CONTENT,
         CHUNK_SIZE,
-        CHUNK_PARAMS,
         CHUNK,
         CHUNK_END,
         CONTENT_END,
@@ -1632,7 +1631,6 @@ public class HttpParser
                     case CONTENT:
                     case CHUNKED_CONTENT:
                     case CHUNK_SIZE:
-                    case CHUNK_PARAMS:
                     case CHUNK:
                     case CHUNK_END:
                         setState(State.CLOSED);
@@ -1781,7 +1779,6 @@ public class HttpParser
                 }
 
                 case CHUNK_SIZE:
-                case CHUNK_PARAMS:
                 {
                     if (parseChunkSize(buffer))
                         return true;
