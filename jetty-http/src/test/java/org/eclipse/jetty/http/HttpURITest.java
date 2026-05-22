@@ -961,6 +961,28 @@ public class HttpURITest
         assertThat(httpURI.getFragment(), is(fragment));
     }
 
+    public static Stream<Arguments> ipv6AuthorityNoPath()
+    {
+        return Stream.of(
+            Arguments.of("http://[::1]", "[::1]", null, null),
+            Arguments.of("http://[::1]?q=1", "[::1]", "q=1", null),
+            Arguments.of("http://[::1]#frag", "[::1]", null, "frag"),
+            Arguments.of("http://[::ffff:127.0.0.1]", "[::ffff:127.0.0.1]", null, null),
+            Arguments.of("http://[::ffff:127.0.0.1]?q=1", "[::ffff:127.0.0.1]", "q=1", null)
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("ipv6AuthorityNoPath")
+    public void testIPv6AuthorityNoPath(String uri, String authority, String query, String fragment)
+    {
+        HttpURI httpURI = new HttpURI(uri);
+        assertThat(httpURI.getAuthority(), is(authority));
+        assertThat(httpURI.getPath(), is(""));
+        assertThat(httpURI.getQuery(), is(query));
+        assertThat(httpURI.getFragment(), is(fragment));
+    }
+
     public static Stream<Arguments> connectURIs()
     {
         return Stream.of(

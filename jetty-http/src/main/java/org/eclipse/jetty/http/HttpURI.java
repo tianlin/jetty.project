@@ -640,16 +640,33 @@ public class HttpURI
                             URIUtil.validateInetAddress(host);
                             _host = host;
                             if (i == end)
+                            {
+                                pathMark = segment = end;
+                                state = State.PATH;
                                 break;
+                            }
                             c = uri.charAt(i);
                             if (c == ':')
                             {
                                 mark = i + 1;
                                 state = State.PORT;
                             }
+                            else if (c == '?')
+                            {
+                                _path = "";
+                                mark = i + 1;
+                                state = State.QUERY;
+                            }
+                            else if (c == '#')
+                            {
+                                _path = "";
+                                mark = i + 1;
+                                state = State.FRAGMENT;
+                            }
                             else
                             {
                                 pathMark = mark = i;
+                                segment = mark + 1;
                                 state = State.PATH;
                             }
                             break;
