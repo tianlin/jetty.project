@@ -9,7 +9,7 @@
 //      The Eclipse Public License is available at
 //      http://www.eclipse.org/legal/epl-v10.html
 //
-//      The Apache License is available at
+//      The Apache License v2.0 is available at
 //      http://www.opensource.org/licenses/apache2.0.php
 //
 //  You may elect to redistribute this code under either of these licenses.
