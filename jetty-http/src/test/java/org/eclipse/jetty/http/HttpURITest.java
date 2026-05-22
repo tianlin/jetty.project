@@ -931,7 +931,11 @@ public class HttpURITest
             "https://bad[0::1::2::3::4]/",
             "http://[normal.com@]vulndetector.com/",
             "http://normal.com[user@vulndetector].com/",
-            "http://normal.com[@]vulndetector.com/"
+            "http://normal.com[@]vulndetector.com/",
+            "http://[::1]x",
+            "http://[::1];p",
+            "http://[::1]@evil.com/",
+            "http://[::ffff:127.0.0.1]x"
         );
     }
 
