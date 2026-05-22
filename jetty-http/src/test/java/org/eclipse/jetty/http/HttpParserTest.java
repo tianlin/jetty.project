@@ -1081,7 +1081,7 @@ public class HttpParserTest
         "1;ext\r\n",
         "1;ext=value\r\n",
         "1;ext=\"value\"\r\n",
-        "1 ; ext = \"value\" \r\n"
+        "1 ; ext = \"value\"\r\n"
     })
     public void testChunkParseExtension(String chunkSizeLine)
     {
@@ -1151,6 +1151,81 @@ public class HttpParserTest
                 "\r\n");
         HttpParser.RequestHandler handler = new Handler();
         HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @Test
+    public void testBadChunkMissingChunkDataTerminator()
+    {
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "1\r\n" +
+                "X" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertEquals("X", _content);
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "1 \r\n",
+        "1;ext \r\n",
+        "1;ext=value \r\n"
+    })
+    public void testBadChunkExtensionTrailingWhiteSpace(String chunkSizeLine)
+    {
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                chunkSizeLine +
+                "X\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertEquals("POST", _methodOrVersion);
+        assertEquals("/chunk", _uriOrStatus);
+        assertTrue(_early);
+        assertFalse(_messageCompleted);
+        assertTrue(parser.isState(State.CLOSE));
+    }
+
+    @Test
+    public void testBadChunkExtensionTooLarge()
+    {
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "1;extension=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n" +
+                "X\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler, 128, HttpCompliance.RFC7230);
         parseAll(parser, buffer);
 
         assertEquals("POST", _methodOrVersion);

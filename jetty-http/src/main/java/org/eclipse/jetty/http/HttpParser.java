@@ -135,6 +135,7 @@ public class HttpParser
         CHUNK_SIZE,
         CHUNK_PARAMS,
         CHUNK,
+        CHUNK_END,
         CONTENT_END,
         TRAILER,
         END,
@@ -191,7 +192,7 @@ public class HttpParser
     private long _contentPosition;
     private int _chunkLength;
     private int _chunkPosition;
-    private int _chunkSizeDigits;
+    private int _chunkSizeBytes;
     private ChunkSizeState _chunkSizeState = ChunkSizeState.SIZE;
     private boolean _headResponse;
     private boolean _cr;
@@ -1633,6 +1634,7 @@ public class HttpParser
                     case CHUNK_SIZE:
                     case CHUNK_PARAMS:
                     case CHUNK:
+                    case CHUNK_END:
                         setState(State.CLOSED);
                         _handler.earlyEOF();
                         break;
@@ -1755,7 +1757,7 @@ public class HttpParser
                         case DIGIT:
                             _chunkLength = t.getHexDigit();
                             _chunkPosition = 0;
-                            _chunkSizeDigits = 1;
+                            _chunkSizeBytes = 1;
                             _chunkSizeState = ChunkSizeState.SIZE;
                             setState(State.CHUNK_SIZE);
                             break;
@@ -1765,7 +1767,7 @@ public class HttpParser
                             {
                                 _chunkLength = t.getHexDigit();
                                 _chunkPosition = 0;
-                                _chunkSizeDigits = 1;
+                                _chunkSizeBytes = 1;
                                 _chunkSizeState = ChunkSizeState.SIZE;
                                 setState(State.CHUNK_SIZE);
                                 break;
@@ -1791,7 +1793,7 @@ public class HttpParser
                     int chunk = _chunkLength - _chunkPosition;
                     if (chunk == 0)
                     {
-                        setState(State.CHUNKED_CONTENT);
+                        setState(State.CHUNK_END);
                     }
                     else
                     {
@@ -1807,6 +1809,12 @@ public class HttpParser
                         if (_handler.content(_contentChunk))
                             return true;
                     }
+                    break;
+                }
+
+                case CHUNK_END:
+                {
+                    parseChunkEnd(buffer);
                     break;
                 }
 
@@ -1832,6 +1840,11 @@ public class HttpParser
             HttpTokens.Token t = next(buffer);
             if (t == null)
                 break;
+            if (_maxHeaderBytes > 0 && ++_chunkSizeBytes > _maxHeaderBytes)
+            {
+                LOG.warn("Chunk size line is too large {}>{}", _chunkSizeBytes, _maxHeaderBytes);
+                throw new BadMessageException(HttpStatus.PAYLOAD_TOO_LARGE_413);
+            }
 
             switch (_chunkSizeState)
             {
@@ -1861,7 +1874,6 @@ public class HttpParser
                                 if (_chunkLength > MAX_CHUNK_LENGTH)
                                     throw new BadMessageException(HttpStatus.PAYLOAD_TOO_LARGE_413);
                                 _chunkLength = _chunkLength * 16 + t.getHexDigit();
-                                _chunkSizeDigits++;
                             }
                             else
                             {
@@ -1876,7 +1888,7 @@ public class HttpParser
                     switch (t.getType())
                     {
                         case LF:
-                            return endChunkSize();
+                            throw new IllegalCharacterException(_state, t, buffer);
 
                         case SPACE:
                         case HTAB:
@@ -1946,7 +1958,7 @@ public class HttpParser
                     switch (t.getType())
                     {
                         case LF:
-                            return endChunkSize();
+                            throw new IllegalCharacterException(_state, t, buffer);
 
                         case SPACE:
                         case HTAB:
@@ -2077,7 +2089,7 @@ public class HttpParser
     private boolean endChunkSize()
     {
         _chunkSizeState = ChunkSizeState.SIZE;
-        _chunkSizeDigits = 0;
+        _chunkSizeBytes = 0;
         if (_chunkLength == 0)
         {
             setState(State.TRAILER);
@@ -2085,6 +2097,29 @@ public class HttpParser
         }
         setState(State.CHUNK);
         return false;
+    }
+
+    private void parseChunkEnd(ByteBuffer buffer)
+    {
+        while (_state == State.CHUNK_END && buffer.hasRemaining())
+        {
+            byte ch = buffer.get();
+            if (_cr)
+            {
+                if (ch != HttpTokens.LINE_FEED)
+                    throw new BadMessageException("Bad chunk ending");
+                _cr = false;
+                setState(State.CHUNKED_CONTENT);
+            }
+            else if (ch == HttpTokens.CARRIAGE_RETURN)
+            {
+                _cr = true;
+            }
+            else
+            {
+                throw new BadMessageException("Bad chunk ending");
+            }
+        }
     }
 
     private static boolean isToken(HttpTokens.Token t)
@@ -2179,7 +2214,7 @@ public class HttpParser
         _contentPosition = 0;
         _chunkLength = 0;
         _chunkPosition = 0;
-        _chunkSizeDigits = 0;
+        _chunkSizeBytes = 0;
         _chunkSizeState = ChunkSizeState.SIZE;
         _responseStatus = 0;
         _contentChunk = null;
