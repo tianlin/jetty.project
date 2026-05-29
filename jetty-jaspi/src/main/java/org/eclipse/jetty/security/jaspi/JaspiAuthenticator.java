@@ -43,6 +43,7 @@ import org.eclipse.jetty.security.authentication.LoginAuthenticator;
 import org.eclipse.jetty.security.authentication.SessionAuthentication;
 import org.eclipse.jetty.server.Authentication;
 import org.eclipse.jetty.server.Authentication.User;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.UserIdentity;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
@@ -97,7 +98,16 @@ public class JaspiAuthenticator extends LoginAuthenticator
     @Override
     public Authentication validateRequest(ServletRequest request, ServletResponse response, boolean mandatory) throws ServerAuthException
     {
-        JaspiMessageInfo info = new JaspiMessageInfo(request, response, mandatory);
+        Request baseRequest = Request.getBaseRequest(request);
+        boolean isDeferred = baseRequest != null && baseRequest.getAuthentication() instanceof Authentication.Deferred;
+        boolean isAuthenticationRequest = mandatory &&
+            isDeferred &&
+            response instanceof HttpServletResponse &&
+            !DeferredAuthentication.isDeferred((HttpServletResponse)response);
+        boolean isMandatory = isDeferred ? isAuthenticationRequest : mandatory;
+
+        JaspiMessageInfo info = new JaspiMessageInfo(request, response, isMandatory);
+        info.setAuthenticationRequest(isAuthenticationRequest);
         request.setAttribute("org.eclipse.jetty.security.jaspi.info", info);
 
         Authentication a = validateRequest(info);
@@ -146,7 +156,20 @@ public class JaspiAuthenticator extends LoginAuthenticator
             ServerAuthContext authContext = _authConfig.getAuthContext(authContextId, _serviceSubject, _authProperties);
             Subject clientSubject = new Subject();
 
-            AuthStatus authStatus = authContext.validateRequest(messageInfo, clientSubject, _serviceSubject);
+            AuthStatus authStatus;
+            CallerPrincipalCallback principalCallback;
+            GroupPrincipalCallback groupPrincipalCallback;
+            try
+            {
+                _callbackHandler.clear();
+                authStatus = authContext.validateRequest(messageInfo, clientSubject, _serviceSubject);
+                principalCallback = _callbackHandler.getThreadCallerPrincipalCallback();
+                groupPrincipalCallback = _callbackHandler.getThreadGroupPrincipalCallback();
+            }
+            finally
+            {
+                _callbackHandler.clear();
+            }
 
             if (authStatus == AuthStatus.SEND_CONTINUE)
                 return Authentication.SEND_CONTINUE;
@@ -157,13 +180,12 @@ public class JaspiAuthenticator extends LoginAuthenticator
             {
                 Set<UserIdentity> ids = clientSubject.getPrivateCredentials(UserIdentity.class);
                 UserIdentity userIdentity;
-                if (ids.size() > 0)
+                if (!ids.isEmpty())
                 {
                     userIdentity = ids.iterator().next();
                 }
                 else
                 {
-                    CallerPrincipalCallback principalCallback = _callbackHandler.getThreadCallerPrincipalCallback();
                     if (principalCallback == null)
                     {
                         return Authentication.UNAUTHENTICATED;
@@ -186,7 +208,6 @@ public class JaspiAuthenticator extends LoginAuthenticator
                             return Authentication.UNAUTHENTICATED;
                         }
                     }
-                    GroupPrincipalCallback groupPrincipalCallback = _callbackHandler.getThreadGroupPrincipalCallback();
                     String[] groups = groupPrincipalCallback == null ? null : groupPrincipalCallback.getGroups();
                     userIdentity = _identityService.newUserIdentity(clientSubject, principal, groups);
                 }
@@ -196,7 +217,10 @@ public class JaspiAuthenticator extends LoginAuthenticator
                 if (cached != null)
                     return cached;
 
-                return new UserAuthentication(getAuthMethod(), userIdentity);
+                String authMethod = messageInfo.getAuthMethod();
+                if (authMethod == null)
+                    authMethod = getAuthMethod();
+                return new UserAuthentication(authMethod, userIdentity);
             }
             if (authStatus == AuthStatus.SEND_SUCCESS)
             {

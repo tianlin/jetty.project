@@ -2,7 +2,7 @@
   <parent>
     <groupId>org.eclipse.jetty</groupId>
     <artifactId>infinispan-parent</artifactId>
-    <version>9.4.60.v20260522cvefix1</version>
+    <version>9.4.61.v20260411cvefix1</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>infinispan-common</artifactId>
