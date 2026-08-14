@@ -33,7 +33,6 @@ import org.eclipse.jetty.util.annotation.Name;
 public class HttpConnectionFactory extends AbstractConnectionFactory implements HttpConfiguration.ConnectionFactory
 {
     private final HttpConfiguration _config;
-    private HttpCompliance _httpCompliance;
     private boolean _recordHttpComplianceViolations = false;
 
     public HttpConnectionFactory()
@@ -49,10 +48,11 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
     public HttpConnectionFactory(@Name("config") HttpConfiguration config, @Name("compliance") HttpCompliance compliance)
     {
         super(HttpVersion.HTTP_1_1.asString());
-        _config = config;
-        _httpCompliance = compliance == null ? HttpCompliance.RFC7230 : compliance;
         if (config == null)
             throw new IllegalArgumentException("Null HttpConfiguration");
+        _config = config;
+        if (compliance != null)
+            _config.setHttpCompliance(compliance);
         addBean(_config);
     }
 
@@ -64,7 +64,7 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
 
     public HttpCompliance getHttpCompliance()
     {
-        return _httpCompliance;
+        return _config.getHttpCompliance();
     }
 
     public boolean isRecordHttpComplianceViolations()
@@ -77,13 +77,13 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
      */
     public void setHttpCompliance(HttpCompliance httpCompliance)
     {
-        _httpCompliance = httpCompliance;
+        _config.setHttpCompliance(httpCompliance);
     }
 
     @Override
     public Connection newConnection(Connector connector, EndPoint endPoint)
     {
-        HttpConnection conn = new HttpConnection(_config, connector, endPoint, _httpCompliance, isRecordHttpComplianceViolations());
+        HttpConnection conn = new HttpConnection(_config, connector, endPoint, getHttpCompliance(), isRecordHttpComplianceViolations());
         return configure(conn, connector, endPoint);
     }
 
