@@ -28,16 +28,19 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ForwardedRequestCustomizerTest
@@ -131,6 +134,108 @@ public class ForwardedRequestCustomizerTest
         server.stop();
     }
 
+    @Test
+    public void testAuthorityCheckedAfterCustomization() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) ->
+        {
+            request.setAuthority("forwarded.example", 80);
+            request.getHttpFields().put(HttpHeader.HOST, "forwarded.example");
+        });
+        handler.requestTester = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
+            "GET http://origin.example/path HTTP/1.1\r\n" +
+                "Host: forwarded.example\r\n" +
+                "Connection: close\r\n\r\n"));
+
+        assertThat(response.getStatus(), is(200));
+        assertTrue(handled.get());
+    }
+
+    @Test
+    public void testAuthorityCheckedWhenCustomizerHandlesRequest() throws Exception
+    {
+        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) -> request.setHandled(true));
+
+        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
+            "GET http://origin.example/path HTTP/1.1\r\n" +
+                "Host: other.example\r\n" +
+                "Connection: close\r\n\r\n"));
+
+        assertThat(response.getStatus(), is(400));
+        assertThat(response.getReason(), is("Authority!=Host"));
+    }
+
+    @Test
+    public void testCustomizerMayRewriteExplicitZeroPortAuthority() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) ->
+        {
+            request.setAuthority("forwarded.example", 80);
+            request.getHttpFields().put(HttpHeader.HOST, "forwarded.example");
+        });
+        handler.requestTester = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
+            "GET http://origin.example:0/path HTTP/1.1\r\n" +
+                "Host: origin.example\r\n" +
+                "Connection: close\r\n\r\n"));
+
+        assertThat(response.getStatus(), is(200));
+        assertTrue(handled.get());
+    }
+
+    @Test
+    public void testCustomizerSchemeCaseChangeDoesNotRewriteExplicitZeroPortAuthority() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) -> request.setScheme("HTTP"));
+        handler.requestTester = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
+            "GET http://origin.example:0/path HTTP/1.1\r\n" +
+                "Host: origin.example\r\n" +
+                "Connection: close\r\n\r\n"));
+
+        assertThat(response.getStatus(), is(400));
+        assertFalse(handled.get());
+    }
+
+    @Test
+    public void testCustomizerSchemeChangeDoesNotRewriteExplicitZeroPortAuthority() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) -> request.setScheme("https"));
+        handler.requestTester = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
+            "GET http://origin.example:0/path HTTP/1.1\r\n" +
+                "Host: origin.example\r\n" +
+                "Connection: close\r\n\r\n"));
+
+        assertThat(response.getStatus(), is(400));
+        assertFalse(handled.get());
+    }
+
     public static Stream<Arguments> cases()
     {
         return Stream.of(
@@ -204,7 +309,7 @@ public class ForwardedRequestCustomizerTest
             Arguments.of(new Request("IPv4 in Request Line")
                     .headers(
                         "GET https://1.2.3.4:2222/ HTTP/1.1",
-                        "Host: wrong"
+                        "Host: 1.2.3.4:2222"
                     ),
                 new Expectations()
                     .scheme("https").serverName("1.2.3.4").serverPort(2222)
@@ -214,7 +319,7 @@ public class ForwardedRequestCustomizerTest
             Arguments.of(new Request("IPv6 in Request Line")
                     .headers(
                         "GET http://[::1]:2222/ HTTP/1.1",
-                        "Host: wrong"
+                        "Host: [::1]:2222"
                     ),
                 new Expectations()
                     .scheme("http").serverName("[::1]").serverPort(2222)
@@ -896,7 +1001,7 @@ public class ForwardedRequestCustomizerTest
                     .configureCustomizer((customizer) -> customizer.setSslIsSecure(false))
                     .headers(
                         "GET https://alt.example.net/foo HTTP/1.1",
-                        "Host: myhost",
+                        "Host: alt.example.net",
                         "X-Forwarded-Proto: http",
                         "Proxy-Ssl-Id: Wibble"
                     ),
@@ -926,7 +1031,7 @@ public class ForwardedRequestCustomizerTest
                     .configureCustomizer((customizer) -> customizer.setSslIsSecure(true))
                     .headers(
                         "GET https://alt.example.net/foo HTTP/1.1",
-                        "Host: myhost",
+                        "Host: alt.example.net",
                         "X-Proxied-Https: off", // this wins for scheme and secure
                         "Proxy-Ssl-Id: Wibble"
                     ),
@@ -941,7 +1046,7 @@ public class ForwardedRequestCustomizerTest
                     .configureCustomizer((customizer) -> customizer.setSslIsSecure(true))
                     .headers(
                         "GET https://alt.example.net/foo HTTP/1.1",
-                        "Host: myhost",
+                        "Host: alt.example.net",
                         "Proxy-Ssl-Id: Wibble",
                         "X-Proxied-Https: off" // this wins for scheme and secure
                     ),
@@ -956,7 +1061,7 @@ public class ForwardedRequestCustomizerTest
                     .configureCustomizer((customizer) -> customizer.setSslIsSecure(false))
                     .headers(
                         "GET https://alt.example.net/foo HTTP/1.1",
-                        "Host: myhost",
+                        "Host: alt.example.net",
                         "X-Proxied-Https: off",
                         "Proxy-Ssl-Id: Wibble",
                         "Proxy-auth-cert: 0123456789abcdef"
@@ -973,7 +1078,7 @@ public class ForwardedRequestCustomizerTest
                     .configureCustomizer((customizer) -> customizer.setSslIsSecure(false))
                     .headers(
                         "GET https://alt.example.net/foo HTTP/1.1",
-                        "Host: myhost",
+                        "Host: alt.example.net",
                         "Proxy-Ssl-Id: Wibble",
                         "Proxy-auth-cert: 0123456789abcdef",
                         "X-Proxied-Https: off"

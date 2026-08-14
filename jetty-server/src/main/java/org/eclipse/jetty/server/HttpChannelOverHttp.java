@@ -59,6 +59,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     private boolean _unknownExpectation = false;
     private boolean _expect100Continue = false;
     private boolean _expect102Processing = false;
+    private boolean _parsingHeaders;
     private List<String> _complianceViolations;
     private HttpFields _trailers;
 
@@ -104,6 +105,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public boolean startRequest(String method, String requestTarget, HttpVersion version)
     {
+        _parsingHeaders = true;
         _metadata.setMethod(method);
         _metadata.getURI().parseRequestTarget(method, requestTarget);
         _metadata.setHttpVersion(version);
@@ -286,12 +288,6 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public boolean headerComplete()
     {
-        if (_complianceViolations != null && !_complianceViolations.isEmpty())
-        {
-            this.getRequest().setAttribute(HttpCompliance.VIOLATIONS_ATTR, _complianceViolations);
-            _complianceViolations = null;
-        }
-
         boolean persistent;
 
         switch (_metadata.getHttpVersion())
@@ -385,7 +381,18 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
         if (!persistent)
             _httpConnection.getGenerator().setPersistent(false);
 
-        onRequest(_metadata);
+        if (_complianceViolations != null && !_complianceViolations.isEmpty())
+            getRequest().setAttribute(HttpCompliance.VIOLATIONS_ATTR, _complianceViolations);
+
+        try
+        {
+            onRequest(_metadata);
+        }
+        finally
+        {
+            _complianceViolations = null;
+            _parsingHeaders = false;
+        }
 
         // Should we delay dispatch until we have some content?
         // We should not delay if there is no content expect or client is expecting 100 or the response is already committed or the request buffer already has something in it to parse
@@ -520,17 +527,21 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public void onComplianceViolation(HttpCompliance compliance, HttpComplianceSection violation, String reason)
     {
-        if (_httpConnection.isRecordHttpComplianceViolations())
+        if (!_httpConnection.isRecordHttpComplianceViolations())
+            return;
+
+        if (!_parsingHeaders)
         {
-            if (_complianceViolations == null)
-            {
-                _complianceViolations = new ArrayList<>();
-            }
-            String record = String.format("%s (see %s) in mode %s for %s in %s",
-                violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
-            _complianceViolations.add(record);
-            if (LOG.isDebugEnabled())
-                LOG.debug(record);
+            super.onComplianceViolation(compliance, violation, reason);
+            return;
         }
+
+        if (_complianceViolations == null)
+            _complianceViolations = new ArrayList<>();
+        String record = String.format("%s (see %s) in mode %s for %s in %s",
+            violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
+        _complianceViolations.add(record);
+        if (LOG.isDebugEnabled())
+            LOG.debug(record);
     }
 }

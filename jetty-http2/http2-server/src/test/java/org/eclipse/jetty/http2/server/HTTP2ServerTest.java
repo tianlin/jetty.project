@@ -27,7 +27,9 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -38,7 +40,11 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.eclipse.jetty.http.HttpCompliance;
+import org.eclipse.jetty.http.HttpComplianceSection;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http2.ErrorCode;
@@ -66,7 +72,11 @@ import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.log.StacklessLogging;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -75,6 +85,170 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class HTTP2ServerTest extends AbstractServerTest
 {
+    @ParameterizedTest
+    @ValueSource(strings = {"bad:port", "bad:65536"})
+    public void testMalformedHostMismatchIsBadRequest(String host) throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        startServer(new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
+            {
+                handled.set(true);
+            }
+        });
+
+        HttpFields fields = new HttpFields();
+        fields.put(HttpHeader.HOST, host);
+        MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+        assertEquals(HttpStatus.BAD_REQUEST_400, response.getStatus());
+        assertFalse(handled.get());
+    }
+
+    @Test
+    public void testMismatchedAuthorityAndHost() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        startServer(new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest request, HttpServletResponse response)
+            {
+                handled.set(true);
+            }
+        });
+
+        HttpFields fields = new HttpFields();
+        fields.put(HttpHeader.HOST, "otherhost:8888");
+        MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+        assertEquals(HttpStatus.BAD_REQUEST_400, response.getStatus());
+        assertFalse(handled.get());
+    }
+
+    @Test
+    public void testMismatchedAuthorityWhenCustomizerHandlesRequest() throws Exception
+    {
+        AtomicBoolean servletInvoked = new AtomicBoolean();
+        HttpConfiguration configuration = new HttpConfiguration();
+        configuration.addCustomizer((connector, channelConfig, request) -> request.setHandled(true));
+        startServer(configuration, new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest request, HttpServletResponse response)
+            {
+                servletInvoked.set(true);
+            }
+        });
+
+        HttpFields fields = new HttpFields();
+        fields.put(HttpHeader.HOST, "otherhost:8888");
+        MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+        assertEquals(HttpStatus.BAD_REQUEST_400, response.getStatus());
+        assertFalse(servletInvoked.get());
+    }
+
+    @Test
+    public void testMatchingAuthorityAndHost() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        startServer(new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest request, HttpServletResponse response)
+            {
+                handled.set(true);
+            }
+        });
+
+        HttpFields fields = new HttpFields();
+        fields.put(HttpHeader.HOST, "LOCALHOST:" + connector.getLocalPort());
+        MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+        assertEquals(HttpStatus.OK_200, response.getStatus());
+        assertTrue(handled.get());
+    }
+
+    @Test
+    public void testMismatchedAuthorityAllowedByComplianceIsVisibleToHandler() throws Exception
+    {
+        AtomicReference<Object> violations = new AtomicReference<>();
+        Set<HttpComplianceSection> originalSections = new HashSet<>(HttpCompliance.CUSTOM0.sections());
+        try
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(HttpCompliance.RFC7230.sections());
+            HttpCompliance.CUSTOM0.sections().remove(HttpComplianceSection.NO_MISMATCHED_AUTHORITY);
+            HttpConfiguration configuration = new HttpConfiguration();
+            configuration.setHttpCompliance(HttpCompliance.CUSTOM0);
+            startServer(configuration, new HttpServlet()
+            {
+                @Override
+                protected void service(HttpServletRequest request, HttpServletResponse response)
+                {
+                    violations.set(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+                }
+            });
+
+            HttpFields fields = new HttpFields();
+            fields.put(HttpHeader.HOST, "otherhost:8888");
+            MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+            assertEquals(HttpStatus.OK_200, response.getStatus());
+            assertNotNull(violations.get());
+            assertThat(violations.get().toString(), containsString("Authority!=Host"));
+        }
+        finally
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(originalSections);
+        }
+    }
+
+    private MetaData.Response sendRequest(MetaData.Request request) throws Exception
+    {
+        ByteBufferPool.Lease lease = new ByteBufferPool.Lease(byteBufferPool);
+        generator.control(lease, new PrefaceFrame());
+        generator.control(lease, new SettingsFrame(new HashMap<>(), false));
+        generator.control(lease, new HeadersFrame(1, request, null, true));
+
+        try (Socket client = new Socket("localhost", connector.getLocalPort()))
+        {
+            OutputStream output = client.getOutputStream();
+            for (ByteBuffer buffer : lease.getByteBuffers())
+            {
+                output.write(BufferUtil.toArray(buffer));
+            }
+
+            CountDownLatch latch = new CountDownLatch(2);
+            AtomicReference<HeadersFrame> responseRef = new AtomicReference<>();
+            Parser parser = new Parser(byteBufferPool, 4096);
+            parser.init(new Parser.Listener.Adapter()
+            {
+                @Override
+                public void onSettings(SettingsFrame frame)
+                {
+                    latch.countDown();
+                }
+
+                @Override
+                public void onHeaders(HeadersFrame frame)
+                {
+                    responseRef.set(frame);
+                    latch.countDown();
+                }
+            });
+
+            parseResponse(client, parser);
+            assertTrue(latch.await(5, TimeUnit.SECONDS));
+            assertNotNull(responseRef.get());
+            return (MetaData.Response)responseRef.get().getMetaData();
+        }
+    }
+
     @Test
     public void testNoPrefaceBytes() throws Exception
     {
