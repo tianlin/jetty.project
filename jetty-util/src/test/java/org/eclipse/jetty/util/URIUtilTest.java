@@ -46,6 +46,7 @@ import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -64,6 +65,28 @@ public class URIUtilTest
 {
     private static final Logger LOG = Log.getLogger(URIUtilTest.class);
     public WorkDir workDir;
+
+    @ParameterizedTest
+    @CsvSource({
+        "http,80",
+        "HTTP,80",
+        "ws,80",
+        "https,443",
+        "HTTPS,443",
+        "wss,443",
+        "ftp,-1",
+        "UNKNOWN,-1"
+    })
+    public void testDefaultPortForScheme(String scheme, int expected)
+    {
+        assertEquals(expected, URIUtil.getDefaultPortForScheme(scheme));
+    }
+
+    @Test
+    public void testDefaultPortForNullScheme()
+    {
+        assertEquals(-1, URIUtil.getDefaultPortForScheme(null));
+    }
 
     public static Stream<Arguments> encodePathSource()
     {

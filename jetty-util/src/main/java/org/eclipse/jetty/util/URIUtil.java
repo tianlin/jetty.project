@@ -47,6 +47,17 @@ public class URIUtil
     public static final String HTTP = "http";
     public static final String HTTPS = "https";
 
+    public static int getDefaultPortForScheme(String scheme)
+    {
+        if (scheme == null)
+            return -1;
+        if (HTTP.equalsIgnoreCase(scheme) || "ws".equalsIgnoreCase(scheme))
+            return 80;
+        if (HTTPS.equalsIgnoreCase(scheme) || "wss".equalsIgnoreCase(scheme))
+            return 443;
+        return -1;
+    }
+
     // Use UTF-8 as per http://www.w3.org/TR/html40/appendix/notes.html#non-ascii-chars
     public static final Charset __CHARSET = StandardCharsets.UTF_8;
 
