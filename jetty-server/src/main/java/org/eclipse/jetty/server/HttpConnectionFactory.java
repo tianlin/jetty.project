@@ -33,6 +33,7 @@ import org.eclipse.jetty.util.annotation.Name;
 public class HttpConnectionFactory extends AbstractConnectionFactory implements HttpConfiguration.ConnectionFactory
 {
     private final HttpConfiguration _config;
+    private volatile HttpCompliance _httpCompliance;
     private boolean _recordHttpComplianceViolations = false;
 
     public HttpConnectionFactory()
@@ -51,8 +52,7 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
         if (config == null)
             throw new IllegalArgumentException("Null HttpConfiguration");
         _config = config;
-        if (compliance != null)
-            _config.setHttpCompliance(compliance);
+        _httpCompliance = compliance;
         addBean(_config);
     }
 
@@ -64,7 +64,8 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
 
     public HttpCompliance getHttpCompliance()
     {
-        return _config.getHttpCompliance();
+        HttpCompliance compliance = _httpCompliance;
+        return compliance == null ? _config.getHttpCompliance() : compliance;
     }
 
     public boolean isRecordHttpComplianceViolations()
@@ -77,7 +78,7 @@ public class HttpConnectionFactory extends AbstractConnectionFactory implements 
      */
     public void setHttpCompliance(HttpCompliance httpCompliance)
     {
-        _config.setHttpCompliance(httpCompliance);
+        _httpCompliance = httpCompliance;
     }
 
     @Override

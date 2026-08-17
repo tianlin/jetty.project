@@ -67,6 +67,7 @@ import org.eclipse.jetty.io.ManagedSelector;
 import org.eclipse.jetty.io.SocketChannelEndPoint;
 import org.eclipse.jetty.server.HttpChannel;
 import org.eclipse.jetty.server.HttpConfiguration;
+import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
@@ -81,10 +82,29 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class HTTP2ServerTest extends AbstractServerTest
 {
+    @Test
+    public void testHttp1ComplianceDoesNotModifySharedHttp2Configuration()
+    {
+        HttpConfiguration configuration = new HttpConfiguration();
+        HTTP2ServerConnectionFactory http2 = new HTTP2ServerConnectionFactory(configuration);
+        HttpConnectionFactory http1 = new HttpConnectionFactory(configuration, HttpCompliance.RFC2616);
+
+        assertSame(configuration, http1.getHttpConfiguration());
+        assertSame(configuration, http2.getHttpConfiguration());
+        assertEquals(HttpCompliance.RFC2616, http1.getHttpCompliance());
+        assertEquals(HttpCompliance.RFC7230, http2.getHttpConfiguration().getHttpCompliance());
+
+        http1.setHttpCompliance(HttpCompliance.RFC7230_LEGACY);
+        assertSame(configuration, http1.getHttpConfiguration());
+        assertEquals(HttpCompliance.RFC7230_LEGACY, http1.getHttpCompliance());
+        assertEquals(HttpCompliance.RFC7230, http2.getHttpConfiguration().getHttpCompliance());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"bad:port", "bad:65536"})
     public void testMalformedHostMismatchIsBadRequest(String host) throws Exception
@@ -94,6 +114,30 @@ public class HTTP2ServerTest extends AbstractServerTest
         {
             @Override
             protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
+            {
+                handled.set(true);
+            }
+        });
+
+        HttpFields fields = new HttpFields();
+        fields.put(HttpHeader.HOST, host);
+        MetaData.Response response = sendRequest(newRequest("GET", fields));
+
+        assertEquals(HttpStatus.BAD_REQUEST_400, response.getStatus());
+        assertFalse(handled.get());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"bad:port", "bad:65536"})
+    public void testMalformedHostIsBadRequestWhenAuthorityMismatchIsAllowed(String host) throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        HttpConfiguration configuration = new HttpConfiguration();
+        configuration.setHttpCompliance(HttpCompliance.RFC2616);
+        startServer(configuration, new HttpServlet()
+        {
+            @Override
+            protected void service(HttpServletRequest request, HttpServletResponse response)
             {
                 handled.set(true);
             }

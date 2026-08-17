@@ -22,6 +22,7 @@ import org.eclipse.jetty.http.HttpCompliance;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 public class HttpConfigurationTest
 {
@@ -37,15 +38,37 @@ public class HttpConfigurationTest
     }
 
     @Test
-    public void testConnectionFactorySynchronizesHttpCompliance()
+    public void testConnectionFactoryHasIndependentHttpCompliance()
     {
         HttpConfiguration configuration = new HttpConfiguration();
         HttpConnectionFactory factory = new HttpConnectionFactory(configuration, HttpCompliance.RFC2616);
-        assertEquals(HttpCompliance.RFC2616, configuration.getHttpCompliance());
+        assertSame(configuration, factory.getHttpConfiguration());
+        assertEquals(HttpCompliance.RFC7230, configuration.getHttpCompliance());
         assertEquals(HttpCompliance.RFC2616, factory.getHttpCompliance());
 
-        factory.setHttpCompliance(HttpCompliance.RFC7230);
+        factory.setHttpCompliance(HttpCompliance.RFC7230_LEGACY);
+        assertSame(configuration, factory.getHttpConfiguration());
         assertEquals(HttpCompliance.RFC7230, configuration.getHttpCompliance());
-        assertEquals(HttpCompliance.RFC7230, factory.getHttpCompliance());
+        assertEquals(HttpCompliance.RFC7230_LEGACY, factory.getHttpCompliance());
+    }
+
+    @Test
+    public void testConnectionFactoryPreservesSharedConfigurationWhenComplianceChanges()
+    {
+        HttpConfiguration configuration = new HttpConfiguration();
+        HttpConnectionFactory factory = new HttpConnectionFactory(configuration);
+        assertSame(configuration, factory.getHttpConfiguration());
+
+        configuration.setRequestHeaderSize(1024);
+        assertEquals(1024, factory.getHttpConfiguration().getRequestHeaderSize());
+        configuration.setHttpCompliance(HttpCompliance.RFC2616);
+        assertEquals(HttpCompliance.RFC2616, factory.getHttpCompliance());
+
+        factory.setHttpCompliance(HttpCompliance.RFC7230_LEGACY);
+        assertSame(configuration, factory.getHttpConfiguration());
+        configuration.setRequestHeaderSize(2048);
+        assertEquals(2048, factory.getHttpConfiguration().getRequestHeaderSize());
+        assertEquals(HttpCompliance.RFC2616, configuration.getHttpCompliance());
+        assertEquals(HttpCompliance.RFC7230_LEGACY, factory.getHttpCompliance());
     }
 }

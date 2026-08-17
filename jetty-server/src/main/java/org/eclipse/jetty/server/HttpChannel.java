@@ -276,6 +276,11 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
         return _configuration;
     }
 
+    protected HttpCompliance getHttpCompliance()
+    {
+        return _configuration.getHttpCompliance();
+    }
+
     @Override
     public boolean isOptimizedForDirectBuffers()
     {
@@ -894,7 +899,7 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
         if (authorityMatches(httpURI, host))
             return true;
 
-        HttpCompliance compliance = _configuration.getHttpCompliance();
+        HttpCompliance compliance = getHttpCompliance();
         String reason = "Authority!=Host";
         if (compliance.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY))
         {
@@ -928,7 +933,7 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
         }
         catch (IllegalArgumentException x)
         {
-            return false;
+            throw new BadMessageException(HttpStatus.BAD_REQUEST_400, "Bad HostPort", x);
         }
         int port = hostPort.getPort();
         int effectiveHostPort = port <= 0 ? defaultPort : port;

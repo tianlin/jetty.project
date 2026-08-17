@@ -80,6 +80,8 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     public void recycle()
     {
         super.recycle();
+        _parsingHeaders = false;
+        _complianceViolations = null;
         _unknownExpectation = false;
         _expect100Continue = false;
         _expect102Processing = false;
@@ -88,6 +90,12 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
         _fields.clear();
         _upgrade = null;
         _trailers = null;
+    }
+
+    @Override
+    protected HttpCompliance getHttpCompliance()
+    {
+        return _httpConnection.getHttpCompliance();
     }
 
     @Override

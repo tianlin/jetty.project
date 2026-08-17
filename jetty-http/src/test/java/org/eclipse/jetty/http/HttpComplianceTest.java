@@ -37,4 +37,14 @@ public class HttpComplianceTest
         assertFalse(HttpCompliance.sectionsBySpec("RFC7230,-NO_MISMATCHED_AUTHORITY")
             .contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
     }
+
+    @Test
+    public void testMismatchedAuthorityByComplianceMode()
+    {
+        assertFalse(HttpCompliance.LEGACY.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
+        assertFalse(HttpCompliance.RFC2616_LEGACY.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
+        assertFalse(HttpCompliance.RFC2616.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
+        assertTrue(HttpCompliance.RFC7230_LEGACY.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
+        assertTrue(HttpCompliance.RFC7230.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
+    }
 }
