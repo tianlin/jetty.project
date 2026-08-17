@@ -98,6 +98,7 @@ import org.eclipse.jetty.util.SocketAddressResolver;
 import org.eclipse.jetty.util.log.StacklessLogging;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -1672,6 +1673,59 @@ public class HttpClientTest extends AbstractHttpClientServerTest
         }
     }
 
+    @Test
+    public void testCONNECTHostMatchesAuthorityForm() throws Exception
+    {
+        try (ServerSocket server = new ServerSocket(0))
+        {
+            startClient(new NormalScenario());
+            String authority = "server.example:8443";
+            Request request = client.newRequest("localhost", server.getLocalPort())
+                .method(HttpMethod.CONNECT)
+                .path(authority);
+            FutureResponseListener listener = new FutureResponseListener(request);
+            request.send(listener);
+
+            try (Socket socket = server.accept())
+            {
+                String headers = readHeaders(socket.getInputStream());
+                assertThat(headers, containsString("CONNECT " + authority + " HTTP/1.1"));
+                assertThat(headers, containsString("Host: " + authority));
+                socket.getOutputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.UTF_8));
+                socket.getOutputStream().flush();
+                assertEquals(200, listener.get(5, TimeUnit.SECONDS).getStatus());
+            }
+        }
+    }
+
+    @Test
+    public void testCONNECTPreservesExplicitHost() throws Exception
+    {
+        try (ServerSocket server = new ServerSocket(0))
+        {
+            startClient(new NormalScenario());
+            String authority = "server.example:8443";
+            String explicitHost = "explicit.example:9443";
+            Request request = client.newRequest("localhost", server.getLocalPort())
+                .method(HttpMethod.CONNECT)
+                .path(authority)
+                .header(HttpHeader.HOST, explicitHost);
+            FutureResponseListener listener = new FutureResponseListener(request);
+            request.send(listener);
+
+            try (Socket socket = server.accept())
+            {
+                String headers = readHeaders(socket.getInputStream());
+                assertThat(headers, containsString("CONNECT " + authority + " HTTP/1.1"));
+                assertThat(headers, containsString("Host: " + explicitHost));
+                assertFalse(headers.contains("Host: " + authority));
+                socket.getOutputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.UTF_8));
+                socket.getOutputStream().flush();
+                assertEquals(200, listener.get(5, TimeUnit.SECONDS).getStatus());
+            }
+        }
+    }
+
     @ParameterizedTest
     @ArgumentsSource(ScenarioProvider.class)
     public void testIPv6HostWithHTTP10(Scenario scenario) throws Exception
@@ -2088,6 +2142,21 @@ public class HttpClientTest extends AbstractHttpClientServerTest
             if (read < 0)
                 break;
         }
+    }
+
+    private String readHeaders(InputStream input) throws IOException
+    {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int crlfs = 0;
+        while (crlfs < 4)
+        {
+            int read = input.read();
+            if (read < 0)
+                break;
+            bytes.write(read);
+            crlfs = read == '\r' || read == '\n' ? crlfs + 1 : 0;
+        }
+        return bytes.toString(StandardCharsets.UTF_8.name());
     }
 
     public abstract static class RetryListener implements Response.CompleteListener

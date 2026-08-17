@@ -21,10 +21,12 @@ package org.eclipse.jetty.server;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.jetty.http.CookieCompliance;
+import org.eclipse.jetty.http.HttpCompliance;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpScheme;
 import org.eclipse.jetty.util.ArrayTernaryTrie;
@@ -77,6 +79,7 @@ public class HttpConfiguration implements Dumpable
     private long _minResponseDataRate;
     private CookieCompliance _requestCookieCompliance = CookieCompliance.RFC6265;
     private CookieCompliance _responseCookieCompliance = CookieCompliance.RFC6265;
+    private HttpCompliance _httpCompliance = HttpCompliance.RFC7230;
     private MultiPartFormDataCompliance _multiPartCompliance = MultiPartFormDataCompliance.LEGACY; // TODO change default in jetty-10
     private boolean _notifyRemoteAsyncErrors = true;
     private boolean _relativeRedirectAllowed;
@@ -146,6 +149,7 @@ public class HttpConfiguration implements Dumpable
         _minResponseDataRate = config._minResponseDataRate;
         _requestCookieCompliance = config._requestCookieCompliance;
         _responseCookieCompliance = config._responseCookieCompliance;
+        _httpCompliance = config._httpCompliance;
         _multiPartCompliance = config._multiPartCompliance;
         _notifyRemoteAsyncErrors = config._notifyRemoteAsyncErrors;
         _relativeRedirectAllowed = config._relativeRedirectAllowed;
@@ -596,6 +600,16 @@ public class HttpConfiguration implements Dumpable
         _requestCookieCompliance = cookieCompliance == null ? CookieCompliance.RFC6265 : cookieCompliance;
     }
 
+    public HttpCompliance getHttpCompliance()
+    {
+        return _httpCompliance;
+    }
+
+    public void setHttpCompliance(HttpCompliance httpCompliance)
+    {
+        _httpCompliance = Objects.requireNonNull(httpCompliance);
+    }
+
     /**
      * @param cookieCompliance The CookieCompliance to use for generating response <code>Set-Cookie</code> headers
      * @see #setResponseCookieCompliance(CookieCompliance)
@@ -765,6 +779,7 @@ public class HttpConfiguration implements Dumpable
             "maxErrorDispatches=" + _maxErrorDispatches,
             "minRequestDataRate=" + _minRequestDataRate,
             "minResponseDataRate=" + _minResponseDataRate,
+            "httpCompliance=" + _httpCompliance,
             "cookieCompliance=" + _requestCookieCompliance,
             "setRequestCookieCompliance=" + _responseCookieCompliance,
             "notifyRemoteAsyncErrors=" + _notifyRemoteAsyncErrors,

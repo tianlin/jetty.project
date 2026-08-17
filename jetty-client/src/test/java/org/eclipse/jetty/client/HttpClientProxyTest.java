@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -32,6 +33,7 @@ import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.util.BasicAuthentication;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpScheme;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -73,6 +75,42 @@ public class HttpClientProxyTest extends AbstractHttpClientServerTest
             .send();
 
         assertEquals(status, response.getStatus());
+    }
+
+    @ParameterizedTest
+    @ArgumentsSource(NonSslScenarioProvider.class)
+    public void testProxiedConnectUsesAuthorityForm(Scenario scenario) throws Exception
+    {
+        AtomicReference<String> requestTarget = new AtomicReference<>();
+        AtomicReference<String> host = new AtomicReference<>();
+        start(scenario, new AbstractHandler()
+        {
+            @Override
+            public void handle(String target, org.eclipse.jetty.server.Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+            {
+                baseRequest.setHandled(true);
+                requestTarget.set(baseRequest.getHttpURI().toString());
+                host.set(request.getHeader(HttpHeader.HOST.asString()));
+                response.setStatus(HttpStatus.OK_200);
+            }
+        });
+
+        int proxyPort = connector.getLocalPort();
+        String serverHost = "server";
+        int serverPort = proxyPort + 1;
+        String authority = serverHost + ":" + serverPort;
+        client.getProxyConfiguration().getProxies().add(new HttpProxy("localhost", proxyPort));
+
+        ContentResponse response = client.newRequest(serverHost, serverPort)
+            .scheme(scenario.getScheme())
+            .method(HttpMethod.CONNECT)
+            .path(authority)
+            .timeout(5, TimeUnit.SECONDS)
+            .send();
+
+        assertEquals(HttpStatus.OK_200, response.getStatus());
+        assertEquals(authority, requestTarget.get());
+        assertEquals(authority, host.get());
     }
 
     @ParameterizedTest

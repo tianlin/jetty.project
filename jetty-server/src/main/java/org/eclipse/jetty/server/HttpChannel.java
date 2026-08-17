@@ -40,13 +40,17 @@ import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletException;
 
 import org.eclipse.jetty.http.BadMessageException;
+import org.eclipse.jetty.http.HttpCompliance;
+import org.eclipse.jetty.http.HttpComplianceSection;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpGenerator;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpHeaderValue;
+import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpScheme;
 import org.eclipse.jetty.http.HttpStatus;
+import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.io.ByteBufferPool;
@@ -62,6 +66,7 @@ import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.SharedBlockingCallback.Blocker;
 import org.eclipse.jetty.util.StringUtil;
+import org.eclipse.jetty.util.URIUtil;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
 import org.eclipse.jetty.util.thread.Scheduler;
@@ -92,6 +97,8 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
     private final Request _request;
     private final Response _response;
     private final HttpChannel.Listener _combinedListener;
+    private boolean _requestTargetHasExplicitZeroPort;
+    private String _requestTargetZeroPortHost;
     @Deprecated
     private final List<Listener> _transientListeners = new ArrayList<>();
     private HttpFields _trailers;
@@ -269,6 +276,11 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
         return _configuration;
     }
 
+    protected HttpCompliance getHttpCompliance()
+    {
+        return _configuration.getHttpCompliance();
+    }
+
     @Override
     public boolean isOptimizedForDirectBuffers()
     {
@@ -412,6 +424,8 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
     {
         _request.recycle();
         _response.recycle();
+        _requestTargetHasExplicitZeroPort = false;
+        _requestTargetZeroPortHost = null;
         _committedMetaData = null;
         _requestLog = _connector == null ? null : _connector.getServer().getRequestLog();
         _written = 0;
@@ -482,8 +496,12 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
                             {
                                 customizer.customize(getConnector(), _configuration, _request);
                                 if (_request.isHandled())
+                                {
+                                    checkAuthority();
                                     return;
+                                }
                             }
+                            checkAuthority();
                             getServer().handle(HttpChannel.this);
                         });
 
@@ -845,6 +863,10 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
 
     public void onRequest(MetaData.Request request)
     {
+        HttpURI requestURI = request.getURI();
+        _requestTargetHasExplicitZeroPort = requestURI.getPort() == 0 &&
+            (requestURI.isAbsolute() || (HttpMethod.CONNECT.is(request.getMethod()) && requestURI.getHost() != null));
+        _requestTargetZeroPortHost = _requestTargetHasExplicitZeroPort ? request.getURI().getHost() : null;
         _requests.incrementAndGet();
         _request.setTimeStamp(System.currentTimeMillis());
         HttpFields fields = _response.getHttpFields();
@@ -867,6 +889,76 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
             LOG.debug("REQUEST for {} on {}{}{} {} {}{}{}", request.getURIString(), this, System.lineSeparator(),
                 request.getMethod(), request.getURIString(), request.getHttpVersion(), System.lineSeparator(),
                 request.getFields());
+    }
+
+    private void checkAuthority()
+    {
+        HttpURI httpURI = _request.getHttpURI();
+        String host = _request.getHttpFields().get(HttpHeader.HOST);
+        if (authorityMatches(httpURI, host))
+            return;
+
+        HttpCompliance compliance = getHttpCompliance();
+        String reason = "Authority!=Host";
+        if (compliance.sections().contains(HttpComplianceSection.NO_MISMATCHED_AUTHORITY))
+        {
+            _response.setStatusWithReason(HttpStatus.BAD_REQUEST_400, reason);
+            throw new BadMessageException(HttpStatus.BAD_REQUEST_400, reason);
+        }
+        onComplianceViolation(compliance, HttpComplianceSection.NO_MISMATCHED_AUTHORITY, reason);
+    }
+
+    private boolean authorityMatches(HttpURI httpURI, String host)
+    {
+        String authority = httpURI.getAuthority();
+        if (authority == null || host == null)
+            return true;
+
+        if (_requestTargetHasExplicitZeroPort && httpURI.getPort() == 0 &&
+            _requestTargetZeroPortHost != null && _requestTargetZeroPortHost.equalsIgnoreCase(httpURI.getHost()))
+            return false;
+
+        if (authority.equalsIgnoreCase(host))
+            return true;
+
+        int defaultPort = URIUtil.getDefaultPortForScheme(httpURI.getScheme());
+        int uriPort = httpURI.getPort();
+        int effectiveURIPort = uriPort <= 0 ? defaultPort : uriPort;
+        HostPort hostPort;
+        try
+        {
+            hostPort = new HostPort(host);
+        }
+        catch (IllegalArgumentException x)
+        {
+            throw new BadMessageException(HttpStatus.BAD_REQUEST_400, "Bad HostPort", x);
+        }
+        int port = hostPort.getPort();
+        int effectiveHostPort = port <= 0 ? defaultPort : port;
+        if (effectiveURIPort != effectiveHostPort)
+            return false;
+        return hostPort.getHost().equalsIgnoreCase(httpURI.getHost());
+    }
+
+    protected void onComplianceViolation(HttpCompliance compliance, HttpComplianceSection violation, String reason)
+    {
+        @SuppressWarnings("unchecked")
+        List<String> violations = (List<String>)_request.getAttribute(HttpCompliance.VIOLATIONS_ATTR);
+        if (violations == null)
+        {
+            violations = new ArrayList<>();
+            _request.setAttribute(HttpCompliance.VIOLATIONS_ATTR, violations);
+        }
+        String record = formatComplianceViolation(compliance, violation, reason);
+        violations.add(record);
+        if (LOG.isDebugEnabled())
+            LOG.debug(record);
+    }
+
+    protected String formatComplianceViolation(HttpCompliance compliance, HttpComplianceSection violation, String reason)
+    {
+        return String.format("%s (see %s) in mode %s for %s in %s",
+            violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
     }
 
     public boolean onContent(HttpInput.Content content)

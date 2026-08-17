@@ -54,7 +54,12 @@ public class AbstractServerTest
 
     protected void startServer(HttpServlet servlet) throws Exception
     {
-        prepareServer(new HTTP2ServerConnectionFactory(new HttpConfiguration()));
+        startServer(new HttpConfiguration(), servlet);
+    }
+
+    protected void startServer(HttpConfiguration configuration, HttpServlet servlet) throws Exception
+    {
+        prepareServer(new HTTP2ServerConnectionFactory(configuration));
         ServletContextHandler context = new ServletContextHandler(server, "/");
         context.addServlet(new ServletHolder(servlet), path);
         server.start();

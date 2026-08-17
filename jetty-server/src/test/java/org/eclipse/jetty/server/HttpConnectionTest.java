@@ -233,7 +233,7 @@ public class HttpConnectionTest
     public void testIpv4MappedIpv6AbsoluteRequestTargetAccepted() throws Exception
     {
         String response = connector.getResponse("GET http://[::ffff:127.0.0.1]/path HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
+            "Host: [::ffff:127.0.0.1]\r\n" +
             "Connection: close\r\n" +
             "\r\n");
 
@@ -1393,7 +1393,7 @@ public class HttpConnectionTest
             int offset = 0;
 
             response = connector.getResponse("CONNECT www.webtide.com:8080 HTTP/1.1\r\n" +
-                "Host: myproxy:8888\r\n" +
+                "Host: www.webtide.com:8080\r\n" +
                 "\r\n", 200, TimeUnit.MILLISECONDS);
             checkContains(response, offset, "HTTP/1.1 200");
         }

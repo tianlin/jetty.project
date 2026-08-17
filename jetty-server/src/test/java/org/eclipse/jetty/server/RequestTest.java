@@ -35,10 +35,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -80,6 +83,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -902,24 +908,250 @@ public class RequestTest
     @Test
     public void testConnectRequestURLDifferentThanHost() throws Exception
     {
-        final AtomicReference<String> resultRequestURL = new AtomicReference<>();
-        final AtomicReference<String> resultRequestURI = new AtomicReference<>();
+        assertMismatchedConnectAuthorityRejected();
+    }
+
+    private void assertMismatchedConnectAuthorityRejected() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
         _handler._checker = (request, response) ->
         {
-            resultRequestURL.set(request.getRequestURL().toString());
-            resultRequestURI.set(request.getRequestURI());
+            handled.set(true);
             return true;
         };
 
         String rawResponse = _connector.getResponse(
             "CONNECT myhost:9999 HTTP/1.1\n" +
-                "Host: otherhost:8888\n" + // per spec, this is ignored if request-target is authority-form
+                "Host: otherhost:8888\n" +
                 "Connection: close\n" +
                 "\n");
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-        assertThat(response.getStatus(), is(HttpStatus.OK_200));
-        assertThat("request.getRequestURL", resultRequestURL.get(), is("http://myhost:9999"));
-        assertThat("request.getRequestURI", resultRequestURI.get(), is(nullValue()));
+        assertThat(response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
+        assertEquals("Authority!=Host", response.getReason());
+        assertFalse(handled.get());
+    }
+
+    @Test
+    public void testConnectExplicitZeroPortDoesNotMatchHostWithoutPort() throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        _handler._checker = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        String rawResponse = _connector.getResponse(
+            "CONNECT origin.example:0 HTTP/1.1\r\n" +
+                "Host: origin.example\r\n" +
+                "Connection: close\r\n\r\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertThat(response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
+        assertEquals("Authority!=Host", response.getReason());
+        assertFalse(handled.get());
+    }
+
+    @Test
+    public void testStrictMismatchedAuthorityIsReportedAsBadMessage() throws Exception
+    {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        _connector.addBean(new HttpChannel.Listener()
+        {
+            @Override
+            public void onDispatchFailure(Request request, Throwable x)
+            {
+                failure.set(x);
+            }
+        });
+        assertMismatchedConnectAuthorityRejected();
+        assertNotNull(failure.get());
+        assertTrue(failure.get() instanceof BadMessageException);
+    }
+
+    public static Stream<Arguments> authorityMatchesHostCases()
+    {
+        return Stream.of(
+            Arguments.of("http://example.com/path", "example.com", 200),
+            Arguments.of("http://EXAMPLE.com/path", "example.COM", 200),
+            Arguments.of("http://example.com/path", "example.com:80", 200),
+            Arguments.of("http://example.com:80/path", "example.com", 200),
+            Arguments.of("http://example.com:0/path", "example.com", 400),
+            Arguments.of("http://example.com:0/path", "example.com:80", 400),
+            Arguments.of("http://example.com:0/path", "example.com:0", 400),
+            Arguments.of("http://[::1]:0/path", "[::1]:0", 400),
+            Arguments.of("http://example.com:8080/path", "example.com:8081", 400),
+            Arguments.of("http://[::1]:8080/path", "[::1]:8080", 200),
+            Arguments.of("http://[::1]:8080/path", "[::1]:8081", 400)
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("authorityMatchesHostCases")
+    public void testAbsoluteRequestAuthorityMatchesHost(String target, String host, int expectedStatus) throws Exception
+    {
+        AtomicBoolean handled = new AtomicBoolean();
+        _handler._checker = (request, response) ->
+        {
+            handled.set(true);
+            return true;
+        };
+
+        String rawResponse = _connector.getResponse(
+            "GET " + target + " HTTP/1.1\r\n" +
+                "Host: " + host + "\r\n" +
+                "Connection: close\r\n\r\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertEquals(expectedStatus, response.getStatus());
+        assertEquals(expectedStatus == 200, handled.get());
+    }
+
+    @Test
+    public void testMismatchedAuthorityViolationVisibleAfterRequestBegin() throws Exception
+    {
+        Set<HttpComplianceSection> originalSections = new HashSet<>(HttpCompliance.CUSTOM0.sections());
+        try
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(HttpCompliance.RFC7230.sections());
+            HttpCompliance.CUSTOM0.sections().remove(HttpComplianceSection.NO_MISMATCHED_AUTHORITY);
+            HttpConnectionFactory factory = _connector.getBean(HttpConnectionFactory.class);
+            factory.setHttpCompliance(HttpCompliance.CUSTOM0);
+            factory.setRecordHttpComplianceViolations(true);
+
+            AtomicReference<Object> listenerViolations = new AtomicReference<>();
+            _connector.addBean(new HttpChannel.Listener()
+            {
+                @Override
+                public void onRequestBegin(Request request)
+                {
+                    listenerViolations.set(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+                }
+            });
+
+            AtomicReference<Object> handlerViolations = new AtomicReference<>();
+            _handler._checker = (request, response) ->
+            {
+                handlerViolations.set(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+                return true;
+            };
+
+            String rawResponse = _connector.getResponse(
+                "CONNECT myhost:9999 HTTP/1.1\r\n" +
+                    "Host: otherhost:8888\r\n" +
+                    "Connection: close\r\n\r\n");
+            assertThat(HttpTester.parseResponse(rawResponse).getStatus(), is(HttpStatus.OK_200));
+            assertNull(listenerViolations.get());
+            assertNotNull(handlerViolations.get());
+            assertThat(handlerViolations.get().toString(), containsString("Authority!=Host"));
+        }
+        finally
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(originalSections);
+        }
+    }
+
+    @Test
+    public void testMismatchedAuthorityViolationDoesNotLeakToNextRequest() throws Exception
+    {
+        Set<HttpComplianceSection> originalSections = new HashSet<>(HttpCompliance.CUSTOM0.sections());
+        try
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(HttpCompliance.RFC7230.sections());
+            HttpCompliance.CUSTOM0.sections().remove(HttpComplianceSection.NO_MISMATCHED_AUTHORITY);
+            HttpConnectionFactory factory = _connector.getBean(HttpConnectionFactory.class);
+            factory.setHttpCompliance(HttpCompliance.CUSTOM0);
+            factory.setRecordHttpComplianceViolations(true);
+
+            List<Object> violations = new ArrayList<>();
+            _handler._checker = (request, response) ->
+            {
+                violations.add(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+                return true;
+            };
+
+            LocalEndPoint endPoint = _connector.executeRequest(
+                "CONNECT myhost:9999 HTTP/1.1\r\n" +
+                    "Host: otherhost:8888\r\n\r\n" +
+                    "GET / HTTP/1.1\r\n" +
+                    "Host: clean.example\r\n" +
+                    "Connection: close\r\n\r\n");
+            endPoint.getResponse();
+            endPoint.getResponse();
+
+            assertEquals(2, violations.size());
+            assertThat(violations.get(0).toString(), containsString("Authority!=Host"));
+            assertNull(violations.get(1));
+        }
+        finally
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(originalSections);
+        }
+    }
+
+    @Test
+    public void testParserAndMismatchedAuthorityViolationsAreBothVisible() throws Exception
+    {
+        Set<HttpComplianceSection> originalSections = new HashSet<>(HttpCompliance.CUSTOM0.sections());
+        try
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(HttpCompliance.LEGACY.sections());
+            HttpCompliance.CUSTOM0.sections().remove(HttpComplianceSection.NO_MISMATCHED_AUTHORITY);
+            HttpConnectionFactory factory = _connector.getBean(HttpConnectionFactory.class);
+            factory.setHttpCompliance(HttpCompliance.CUSTOM0);
+            factory.setRecordHttpComplianceViolations(true);
+
+            AtomicReference<Object> handlerViolations = new AtomicReference<>();
+            _handler._checker = (request, response) ->
+            {
+                handlerViolations.set(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+                return true;
+            };
+
+            String rawResponse = _connector.getResponse(
+                "CONNECT myhost:9999 HTTP/1.0\r\n" +
+                    "HOST: otherhost:8888\r\n" +
+                    "Connection: close\r\n\r\n");
+            assertThat(HttpTester.parseResponse(rawResponse).getStatus(), is(HttpStatus.OK_200));
+            assertNotNull(handlerViolations.get());
+            assertThat(handlerViolations.get().toString(), containsString("HOST"));
+            assertThat(handlerViolations.get().toString(), containsString("Authority!=Host"));
+        }
+        finally
+        {
+            HttpCompliance.CUSTOM0.sections().clear();
+            HttpCompliance.CUSTOM0.sections().addAll(originalSections);
+        }
+    }
+
+    @Test
+    public void testParserComplianceViolationVisibleToRequestBeginListener() throws Exception
+    {
+        HttpConnectionFactory factory = _connector.getBean(HttpConnectionFactory.class);
+        factory.setHttpCompliance(HttpCompliance.LEGACY);
+        factory.setRecordHttpComplianceViolations(true);
+
+        AtomicReference<Object> listenerViolations = new AtomicReference<>();
+        _connector.addBean(new HttpChannel.Listener()
+        {
+            @Override
+            public void onRequestBegin(Request request)
+            {
+                listenerViolations.set(request.getAttribute(HttpCompliance.VIOLATIONS_ATTR));
+            }
+        });
+        _handler._checker = (request, response) -> true;
+
+        String rawResponse = _connector.getResponse(
+            "GET / HTTP/1.0\r\n" +
+                "HOST: example.com\r\n" +
+                "Connection: close\r\n\r\n");
+        assertThat(HttpTester.parseResponse(rawResponse).getStatus(), is(HttpStatus.OK_200));
+        assertNotNull(listenerViolations.get());
+        assertThat(listenerViolations.get().toString(), containsString("HOST"));
     }
 
     @Test
@@ -979,7 +1211,7 @@ public class RequestTest
         results.clear();
         response = _connector.getResponse(
             "GET http://myhost:8888/ HTTP/1.1\n" +
-                "Host: wrong:666\n" +
+                "Host: myhost:8888\n" +
                 "Connection: close\n" +
                 "\n");
         i = 0;

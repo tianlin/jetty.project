@@ -35,6 +35,7 @@ import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.io.CyclicTimeouts;
 import org.eclipse.jetty.util.Attachable;
@@ -113,7 +114,7 @@ public abstract class HttpConnection implements Connection, Attachable
             request.path(path);
         }
 
-        if (proxy instanceof HttpProxy && !HttpClient.isSchemeSecure(request.getScheme()))
+        if (proxy instanceof HttpProxy && !HttpClient.isSchemeSecure(request.getScheme()) && !HttpMethod.CONNECT.is(request.getMethod()))
         {
             URI uri = request.getURI();
             if (uri != null)
@@ -129,7 +130,9 @@ public abstract class HttpConnection implements Connection, Attachable
             if (!headers.containsKey(HttpHeader.HOST.asString()))
             {
                 URI uri = request.getURI();
-                if (uri != null)
+                if (HttpMethod.CONNECT.is(request.getMethod()))
+                    headers.put(HttpHeader.HOST, path);
+                else if (uri != null)
                     headers.put(HttpHeader.HOST, uri.getAuthority());
                 else
                     headers.put(getHttpDestination().getHostField());

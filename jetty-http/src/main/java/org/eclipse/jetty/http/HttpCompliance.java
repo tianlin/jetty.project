@@ -137,7 +137,8 @@ public enum HttpCompliance // TODO in Jetty-10 convert this enum to a class so t
                     HttpComplianceSection.NO_UTF16_ENCODINGS,
                     HttpComplianceSection.NO_USER_INFO,
                     HttpComplianceSection.NO_AMBIGUOUS_EMPTY_SEGMENT,
-                    HttpComplianceSection.NO_AMBIGUOUS_PATH_ENCODING));
+                    HttpComplianceSection.NO_AMBIGUOUS_PATH_ENCODING,
+                    HttpComplianceSection.NO_MISMATCHED_AUTHORITY));
                 break;
 
             case "*":

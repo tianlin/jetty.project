@@ -59,6 +59,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     private boolean _unknownExpectation = false;
     private boolean _expect100Continue = false;
     private boolean _expect102Processing = false;
+    private boolean _parsingHeaders;
     private List<String> _complianceViolations;
     private HttpFields _trailers;
 
@@ -79,6 +80,8 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     public void recycle()
     {
         super.recycle();
+        _parsingHeaders = false;
+        _complianceViolations = null;
         _unknownExpectation = false;
         _expect100Continue = false;
         _expect102Processing = false;
@@ -87,6 +90,12 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
         _fields.clear();
         _upgrade = null;
         _trailers = null;
+    }
+
+    @Override
+    protected HttpCompliance getHttpCompliance()
+    {
+        return _httpConnection.getHttpCompliance();
     }
 
     @Override
@@ -104,6 +113,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public boolean startRequest(String method, String requestTarget, HttpVersion version)
     {
+        _parsingHeaders = true;
         _metadata.setMethod(method);
         _metadata.getURI().parseRequestTarget(method, requestTarget);
         _metadata.setHttpVersion(version);
@@ -286,12 +296,6 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public boolean headerComplete()
     {
-        if (_complianceViolations != null && !_complianceViolations.isEmpty())
-        {
-            this.getRequest().setAttribute(HttpCompliance.VIOLATIONS_ATTR, _complianceViolations);
-            _complianceViolations = null;
-        }
-
         boolean persistent;
 
         switch (_metadata.getHttpVersion())
@@ -331,6 +335,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                 if (_unknownExpectation)
                 {
                     badMessage(new BadMessageException(HttpStatus.EXPECTATION_FAILED_417));
+                    clearComplianceState();
                     return false;
                 }
 
@@ -355,7 +360,10 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                     getResponse().getHttpFields().add(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE);
 
                 if (_upgrade != null && upgrade())
+                {
+                    clearComplianceState();
                     return true;
+                }
 
                 break;
             }
@@ -369,10 +377,14 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                     "*".equals(_metadata.getURI().toString()) &&
                     _fields.size() == 0 &&
                     upgrade())
+                {
+                    clearComplianceState();
                     return true;
+                }
 
                 badMessage(new BadMessageException(HttpStatus.UPGRADE_REQUIRED_426));
                 _httpConnection.getParser().close();
+                clearComplianceState();
                 return false;
             }
 
@@ -385,7 +397,17 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
         if (!persistent)
             _httpConnection.getGenerator().setPersistent(false);
 
-        onRequest(_metadata);
+        if (_complianceViolations != null && !_complianceViolations.isEmpty())
+            getRequest().setAttribute(HttpCompliance.VIOLATIONS_ATTR, _complianceViolations);
+
+        try
+        {
+            onRequest(_metadata);
+        }
+        finally
+        {
+            clearComplianceState();
+        }
 
         // Should we delay dispatch until we have some content?
         // We should not delay if there is no content expect or client is expecting 100 or the response is already committed or the request buffer already has something in it to parse
@@ -520,17 +542,26 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
     @Override
     public void onComplianceViolation(HttpCompliance compliance, HttpComplianceSection violation, String reason)
     {
-        if (_httpConnection.isRecordHttpComplianceViolations())
+        if (!_httpConnection.isRecordHttpComplianceViolations())
+            return;
+
+        if (!_parsingHeaders)
         {
-            if (_complianceViolations == null)
-            {
-                _complianceViolations = new ArrayList<>();
-            }
-            String record = String.format("%s (see %s) in mode %s for %s in %s",
-                violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
-            _complianceViolations.add(record);
-            if (LOG.isDebugEnabled())
-                LOG.debug(record);
+            super.onComplianceViolation(compliance, violation, reason);
+            return;
         }
+
+        if (_complianceViolations == null)
+            _complianceViolations = new ArrayList<>();
+        String record = formatComplianceViolation(compliance, violation, reason);
+        _complianceViolations.add(record);
+        if (LOG.isDebugEnabled())
+            LOG.debug(record);
+    }
+
+    private void clearComplianceState()
+    {
+        _complianceViolations = null;
+        _parsingHeaders = false;
     }
 }
