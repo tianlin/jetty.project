@@ -24,6 +24,7 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -63,6 +64,7 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.toolchain.test.MavenTestingUtils;
 import org.eclipse.jetty.util.Attributes;
 import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.TypeUtil;
 import org.eclipse.jetty.util.URIUtil;
 import org.eclipse.jetty.util.security.Constraint;
 import org.junit.jupiter.api.Test;
@@ -73,6 +75,7 @@ import static org.eclipse.jetty.client.api.Authentication.ANY_REALM;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalToIgnoringCase;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -80,6 +83,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class HttpClientAuthenticationTest extends AbstractHttpClientServerTest
 {
     private String realm = "TestRealm";
+    // @checkstyle-disable-check : AvoidEscapedUnicodeCharactersCheck
+    private static final String UTF8_PASSWORD = "\u20AC";
+    // @checkstyle-enable-check : AvoidEscapedUnicodeCharactersCheck
 
     public void startBasic(Scenario scenario, Handler handler) throws Exception
     {
@@ -172,6 +178,112 @@ public class HttpClientAuthenticationTest extends AbstractHttpClientServerTest
 
     @ParameterizedTest
     @ArgumentsSource(ScenarioProvider.class)
+    public void testDigestAuthenticationWithUTF8Password(Scenario scenario) throws Exception
+    {
+        startDigest(scenario, new EmptyServerHandler());
+        URI uri = URI.create(scenario.getScheme() + "://localhost:" + connector.getLocalPort());
+        // @checkstyle-disable-check : AvoidEscapedUnicodeCharactersCheck
+        testAuthentication(scenario, new DigestAuthentication(uri, realm, "digest_utf8", "\u20AC"));
+        // @checkstyle-enable-check : AvoidEscapedUnicodeCharactersCheck
+    }
+
+    @ParameterizedTest
+    @ArgumentsSource(ScenarioProvider.class)
+    public void testDigestAuthenticationWithLegacyChallengeRejectsUnmappablePassword(Scenario scenario) throws Exception
+    {
+        AtomicBoolean authenticated = new AtomicBoolean();
+        start(scenario, new EmptyServerHandler()
+        {
+            @Override
+            protected void service(String target, org.eclipse.jetty.server.Request jettyRequest, HttpServletRequest request, HttpServletResponse response)
+            {
+                String authorization = request.getHeader(HttpHeader.AUTHORIZATION.asString());
+                if (authorization == null)
+                {
+                    response.setStatus(HttpStatus.UNAUTHORIZED_401);
+                    response.setHeader(HttpHeader.WWW_AUTHENTICATE.asString(), "Digest realm=\"" + realm + "\", nonce=\"legacy-nonce\", algorithm=MD5, qop=\"auth\"");
+                }
+                else if (isExpectedDigest(authorization, StandardCharsets.ISO_8859_1))
+                {
+                    authenticated.set(true);
+                    response.setStatus(HttpStatus.OK_200);
+                }
+                else
+                {
+                    response.setStatus(HttpStatus.UNAUTHORIZED_401);
+                }
+            }
+        });
+
+        URI uri = URI.create(scenario.getScheme() + "://localhost:" + connector.getLocalPort());
+        // @checkstyle-disable-check : AvoidEscapedUnicodeCharactersCheck
+        client.getAuthenticationStore().addAuthentication(new DigestAuthentication(uri, realm, "digest_utf8", "\u20AC"));
+        // @checkstyle-enable-check : AvoidEscapedUnicodeCharactersCheck
+
+        Request request = client.newRequest("localhost", connector.getLocalPort()).scheme(scenario.getScheme()).path("/secure");
+        AtomicReference<Result> result = new AtomicReference<>();
+        CountDownLatch complete = new CountDownLatch(1);
+        request.timeout(5, TimeUnit.SECONDS).send(current ->
+        {
+            result.set(current);
+            complete.countDown();
+        });
+
+        assertTrue(complete.await(5, TimeUnit.SECONDS));
+        assertFalse(authenticated.get());
+        assertNotNull(result.get());
+        assertFalse(result.get().isSucceeded() && result.get().getResponse().getStatus() == HttpStatus.OK_200);
+    }
+
+    @ParameterizedTest
+    @ArgumentsSource(ScenarioProvider.class)
+    public void testDigestAuthenticationWithCaseInsensitiveCharsetParameter(Scenario scenario) throws Exception
+    {
+        AtomicBoolean authenticated = new AtomicBoolean();
+        start(scenario, new EmptyServerHandler()
+        {
+            @Override
+            protected void service(String target, org.eclipse.jetty.server.Request jettyRequest, HttpServletRequest request, HttpServletResponse response)
+            {
+                String authorization = request.getHeader(HttpHeader.AUTHORIZATION.asString());
+                if (authorization == null)
+                {
+                    response.setStatus(HttpStatus.UNAUTHORIZED_401);
+                    response.setHeader(HttpHeader.WWW_AUTHENTICATE.asString(), "Digest realm=\"" + realm + "\", nonce=\"utf8-nonce\", algorithm=MD5, qop=\"auth\", Charset=UTF-8");
+                }
+                else if (isExpectedDigest(authorization, StandardCharsets.UTF_8))
+                {
+                    authenticated.set(true);
+                    response.setStatus(HttpStatus.OK_200);
+                }
+                else
+                {
+                    response.setStatus(HttpStatus.UNAUTHORIZED_401);
+                }
+            }
+        });
+
+        URI uri = URI.create(scenario.getScheme() + "://localhost:" + connector.getLocalPort());
+        client.getAuthenticationStore().addAuthentication(new DigestAuthentication(uri, realm, "digest_utf8", UTF8_PASSWORD));
+
+        Request request = client.newRequest("localhost", connector.getLocalPort()).scheme(scenario.getScheme()).path("/secure");
+        AtomicReference<Result> result = new AtomicReference<>();
+        CountDownLatch complete = new CountDownLatch(1);
+        request.timeout(5, TimeUnit.SECONDS).send(current ->
+        {
+            result.set(current);
+            complete.countDown();
+        });
+
+        assertTrue(complete.await(5, TimeUnit.SECONDS));
+        assertTrue(authenticated.get());
+        assertNotNull(result.get());
+        assertTrue(result.get().isSucceeded());
+        assertEquals(HttpStatus.OK_200, result.get().getResponse().getStatus());
+    }
+
+    @ParameterizedTest
+    @ArgumentsSource(ScenarioProvider.class)
     public void testDigestAnyRealm(Scenario scenario) throws Exception
     {
         startDigest(scenario, new EmptyServerHandler());
@@ -242,6 +354,49 @@ public class HttpClientAuthenticationTest extends AbstractHttpClientServerTest
         assertEquals(200, response.getStatus());
         assertTrue(requests.get().await(5, TimeUnit.SECONDS));
         client.getRequestListeners().remove(requestListener);
+    }
+
+    private boolean isExpectedDigest(String authorization, Charset charset)
+    {
+        try
+        {
+            String user = digestParameter(authorization, "username");
+            String challengeRealm = digestParameter(authorization, "realm");
+            String nonce = digestParameter(authorization, "nonce");
+            String uri = digestParameter(authorization, "uri");
+            String qop = digestParameter(authorization, "qop");
+            String nc = digestParameter(authorization, "nc");
+            String cnonce = digestParameter(authorization, "cnonce");
+            String response = digestParameter(authorization, "response");
+            if (user == null || challengeRealm == null || nonce == null || uri == null || qop == null || nc == null || cnonce == null || response == null)
+                return false;
+
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            String a1 = user + ":" + challengeRealm + ":" + UTF8_PASSWORD;
+            String hashA1 = TypeUtil.toString(md.digest(a1.getBytes(charset)), 16);
+            md.reset();
+            String a2 = "GET:" + uri;
+            String hashA2 = TypeUtil.toString(md.digest(a2.getBytes(charset)), 16);
+            md.reset();
+            String a3 = hashA1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + hashA2;
+            String expected = TypeUtil.toString(md.digest(a3.getBytes(charset)), 16);
+            return expected.equalsIgnoreCase(response);
+        }
+        catch (Exception x)
+        {
+            return false;
+        }
+    }
+
+    private String digestParameter(String authorization, String name)
+    {
+        String prefix = name + "=\"";
+        int start = authorization.indexOf(prefix);
+        if (start < 0)
+            return null;
+        start += prefix.length();
+        int end = authorization.indexOf('"', start);
+        return end < 0 ? null : authorization.substring(start, end);
     }
 
     @ParameterizedTest
@@ -771,6 +926,16 @@ public class HttpClientAuthenticationTest extends AbstractHttpClientServerTest
 
         assertTrue(headerInfos.get(1).getType().equalsIgnoreCase("Negotiate"));
         assertEquals("YIIJvwYGKwYBBQUCoIIJszCCCa+gJDAi=", headerInfos.get(1).getBase64());
+    }
+
+    @Test
+    public void testHeaderInfoParameterMapPreservesParameterNameCase()
+    {
+        AuthenticationProtocolHandler aph = new WWWAuthenticationProtocolHandler(client);
+        HeaderInfo headerInfo = aph.getHeaderInfo("Scheme nAmE=value").get(0);
+
+        assertEquals("value", headerInfo.getParameters().get("nAmE"));
+        assertEquals("value", headerInfo.getParameter("nAmE"));
     }
 
     @Test

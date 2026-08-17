@@ -22,6 +22,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.URI;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Collections;
@@ -68,6 +69,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DigestPostTest
 {
     private static final String NC = "00000001";
+    private static final String UTF8_USER = "utf8user";
+    // @checkstyle-disable-check : AvoidEscapedUnicodeCharactersCheck
+    private static final String UTF8_PASSWORD = "\u03B1\u03B2password";
+    // @checkstyle-enable-check : AvoidEscapedUnicodeCharactersCheck
+    private static final String COLLISION_PASSWORD = "??password";
 
     public static final String __message =
         "0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 \n" +
@@ -133,6 +139,9 @@ public class DigestPostTest
 
             TestLoginService realm = new TestLoginService("test");
             realm.putUser("testuser", new Password("password"), new String[]{"test"});
+            // @checkstyle-disable-check : AvoidEscapedUnicodeCharactersCheck
+            realm.putUser(UTF8_USER, new Password(UTF8_PASSWORD), new String[]{"test"});
+            // @checkstyle-enable-check : AvoidEscapedUnicodeCharactersCheck
             _server.addBean(realm);
 
             ConstraintSecurityHandler security = (ConstraintSecurityHandler)context.getSecurityHandler();
@@ -318,6 +327,82 @@ public class DigestPostTest
         }
     }
 
+    @Test
+    public void testServerDigestAuthenticationWithUTF8Password() throws Exception
+    {
+        byte[] bytes = __message.getBytes(StandardCharsets.UTF_8);
+        String result = sendRequest(bytes, null);
+        assertTrue(result.startsWith("HTTP/1.1 401 Unauthorized"));
+        assertTrue(result.contains("charset=UTF-8"));
+
+        String nonce = getNonce(result);
+        String cnonce = newCNonce();
+        String digest = "Digest username=\"" + UTF8_USER + "\" realm=\"test\" nonce=\"" + nonce + "\" uri=\"/test/\" algorithm=MD5 response=\"" +
+            newResponse("POST", "/test/", cnonce, UTF8_USER, "test", UTF8_PASSWORD, nonce, "auth", StandardCharsets.UTF_8) +
+            "\" qop=auth nc=" + NC + " cnonce=\"" + cnonce + "\"";
+
+        _received = null;
+        result = sendRequest(bytes, digest);
+        assertTrue(result.startsWith("HTTP/1.1 200 OK"));
+        assertEquals(__message, _received);
+    }
+
+    @Test
+    public void testServerRejectsUTF8PasswordCollision() throws Exception
+    {
+        byte[] bytes = __message.getBytes(StandardCharsets.UTF_8);
+        String result = sendRequest(bytes, null);
+        assertTrue(result.startsWith("HTTP/1.1 401 Unauthorized"));
+        assertTrue(result.contains("charset=UTF-8"));
+
+        String nonce = getNonce(result);
+        String cnonce = newCNonce();
+        String digest = "Digest username=\"" + UTF8_USER + "\" realm=\"test\" nonce=\"" + nonce + "\" uri=\"/test/\" algorithm=MD5 response=\"" +
+            newResponse("POST", "/test/", cnonce, UTF8_USER, "test", COLLISION_PASSWORD, nonce, "auth", StandardCharsets.UTF_8) +
+            "\" qop=auth nc=" + NC + " cnonce=\"" + cnonce + "\"";
+
+        _received = null;
+        result = sendRequest(bytes, digest);
+        assertTrue(result.startsWith("HTTP/1.1 401 Unauthorized"));
+        assertEquals(null, _received);
+    }
+
+    private String sendRequest(byte[] bytes, String authorization) throws Exception
+    {
+        try (Socket socket = new Socket("127.0.0.1", ((NetworkConnector)_server.getConnectors()[0]).getLocalPort()))
+        {
+            StringBuilder headers = new StringBuilder()
+                .append("POST /test/ HTTP/1.0\r\n")
+                .append("Host: 127.0.0.1:")
+                .append(((NetworkConnector)_server.getConnectors()[0]).getLocalPort())
+                .append("\r\n")
+                .append("Content-Length: ")
+                .append(bytes.length)
+                .append("\r\n");
+            if (authorization != null)
+                headers.append("Authorization: ").append(authorization).append("\r\n");
+            headers.append("\r\n");
+
+            socket.getOutputStream().write(headers.toString().getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write(bytes);
+            socket.getOutputStream().flush();
+            return IO.toString(socket.getInputStream());
+        }
+    }
+
+    private String getNonce(String response)
+    {
+        int n = response.indexOf("nonce=");
+        return response.substring(n + 7, response.indexOf('"', n + 7));
+    }
+
+    private String newCNonce() throws Exception
+    {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        byte[] bytes = md.digest(String.valueOf(TimeUnit.NANOSECONDS.toMillis(System.nanoTime())).getBytes(StringUtil.__ISO_8859_1));
+        return encode(bytes);
+    }
+
     public static class PostServlet extends HttpServlet
     {
         private static final long serialVersionUID = 1L;
@@ -337,33 +422,39 @@ public class DigestPostTest
     protected String newResponse(String method, String uri, String cnonce, String principal, String realm, String credentials, String nonce, String qop)
         throws Exception
     {
+        return newResponse(method, uri, cnonce, principal, realm, credentials, nonce, qop, StandardCharsets.ISO_8859_1);
+    }
+
+    protected String newResponse(String method, String uri, String cnonce, String principal, String realm, String credentials, String nonce, String qop, Charset charset)
+        throws Exception
+    {
         MessageDigest md = MessageDigest.getInstance("MD5");
 
         // calc A1 digest
-        md.update(principal.getBytes(StringUtil.__ISO_8859_1));
+        md.update(principal.getBytes(charset));
         md.update((byte)':');
-        md.update(realm.getBytes(StringUtil.__ISO_8859_1));
+        md.update(realm.getBytes(charset));
         md.update((byte)':');
-        md.update(credentials.getBytes(StringUtil.__ISO_8859_1));
+        md.update(credentials.getBytes(charset));
         byte[] ha1 = md.digest();
         // calc A2 digest
         md.reset();
-        md.update(method.getBytes(StringUtil.__ISO_8859_1));
+        md.update(method.getBytes(charset));
         md.update((byte)':');
-        md.update(uri.getBytes(StringUtil.__ISO_8859_1));
+        md.update(uri.getBytes(charset));
         byte[] ha2 = md.digest();
 
-        md.update(TypeUtil.toString(ha1, 16).getBytes(StringUtil.__ISO_8859_1));
+        md.update(TypeUtil.toString(ha1, 16).getBytes(charset));
         md.update((byte)':');
-        md.update(nonce.getBytes(StringUtil.__ISO_8859_1));
+        md.update(nonce.getBytes(charset));
         md.update((byte)':');
-        md.update(NC.getBytes(StringUtil.__ISO_8859_1));
+        md.update(NC.getBytes(charset));
         md.update((byte)':');
-        md.update(cnonce.getBytes(StringUtil.__ISO_8859_1));
+        md.update(cnonce.getBytes(charset));
         md.update((byte)':');
-        md.update(qop.getBytes(StringUtil.__ISO_8859_1));
+        md.update(qop.getBytes(charset));
         md.update((byte)':');
-        md.update(TypeUtil.toString(ha2, 16).getBytes(StringUtil.__ISO_8859_1));
+        md.update(TypeUtil.toString(ha2, 16).getBytes(charset));
         byte[] digest = md.digest();
 
         // check digest

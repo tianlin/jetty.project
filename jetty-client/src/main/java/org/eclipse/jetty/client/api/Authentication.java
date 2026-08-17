@@ -128,7 +128,17 @@ public interface Authentication
          */
         public String getParameter(String paramName)
         {
-            return params.get(StringUtil.asciiToLowerCase(paramName));
+            String lowerCaseName = StringUtil.asciiToLowerCase(paramName);
+            String value = params.get(lowerCaseName);
+            if (value != null)
+                return value;
+
+            for (Map.Entry<String, String> entry : params.entrySet())
+            {
+                if (lowerCaseName.equals(StringUtil.asciiToLowerCase(entry.getKey())))
+                    return entry.getValue();
+            }
+            return null;
         }
 
         /**
