@@ -3,7 +3,7 @@
   <parent>
     <groupId>org.eclipse.jetty.gcloud</groupId>
     <artifactId>gcloud-parent</artifactId>
-    <version>9.4.61.v20260411cvefix1</version>
+    <version>9.4.63.v20260817cvefix1</version>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>

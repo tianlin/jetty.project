@@ -1,3 +1,7 @@
+9.4.63.v20260817cvefix1 - 17 August 2026
+ + Internal backport build for CVE-2026-10050 Digest authentication charset hardening
+ + Includes internal backport fixes for CVE-2025-11143, CVE-2026-2332 and CVE-2026-5795
+
 9.4.61.v20260411cvefix1 - 11 April 2026
  + Internal backport build for CVE-2026-5795 JASPI MessageInfo/authentication request hardening
  + Includes internal backport fixes for CVE-2025-11143 and CVE-2026-2332
