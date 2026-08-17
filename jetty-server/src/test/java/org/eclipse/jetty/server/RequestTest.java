@@ -908,6 +908,11 @@ public class RequestTest
     @Test
     public void testConnectRequestURLDifferentThanHost() throws Exception
     {
+        assertMismatchedConnectAuthorityRejected();
+    }
+
+    private void assertMismatchedConnectAuthorityRejected() throws Exception
+    {
         AtomicBoolean handled = new AtomicBoolean();
         _handler._checker = (request, response) ->
         {
@@ -949,7 +954,6 @@ public class RequestTest
     @Test
     public void testStrictMismatchedAuthorityIsReportedAsBadMessage() throws Exception
     {
-        AtomicBoolean handled = new AtomicBoolean();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         _connector.addBean(new HttpChannel.Listener()
         {
@@ -959,20 +963,7 @@ public class RequestTest
                 failure.set(x);
             }
         });
-        _handler._checker = (request, response) ->
-        {
-            handled.set(true);
-            return true;
-        };
-
-        String rawResponse = _connector.getResponse(
-            "CONNECT myhost:9999 HTTP/1.1\r\n" +
-                "Host: otherhost:8888\r\n" +
-                "Connection: close\r\n\r\n");
-        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-        assertThat(response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
-        assertEquals("Authority!=Host", response.getReason());
-        assertFalse(handled.get());
+        assertMismatchedConnectAuthorityRejected();
         assertNotNull(failure.get());
         assertTrue(failure.get() instanceof BadMessageException);
     }

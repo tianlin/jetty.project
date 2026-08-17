@@ -114,7 +114,7 @@ public abstract class HttpConnection implements Connection, Attachable
             request.path(path);
         }
 
-        if (proxy instanceof HttpProxy && !HttpClient.isSchemeSecure(request.getScheme()))
+        if (proxy instanceof HttpProxy && !HttpClient.isSchemeSecure(request.getScheme()) && !HttpMethod.CONNECT.is(request.getMethod()))
         {
             URI uri = request.getURI();
             if (uri != null)

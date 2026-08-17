@@ -286,7 +286,7 @@ public class HTTP2ServerTest extends AbstractServerTest
                 }
             });
 
-            parseResponse(client, parser);
+            parseResponse(client, parser, 2000);
             assertTrue(latch.await(5, TimeUnit.SECONDS));
             assertNotNull(responseRef.get());
             return (MetaData.Response)responseRef.get().getMetaData();

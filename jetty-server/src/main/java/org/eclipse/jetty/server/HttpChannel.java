@@ -501,8 +501,7 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
                                     return;
                                 }
                             }
-                            if (!checkAuthority())
-                                return;
+                            checkAuthority();
                             getServer().handle(HttpChannel.this);
                         });
 
@@ -892,12 +891,12 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
                 request.getFields());
     }
 
-    private boolean checkAuthority() throws IOException
+    private void checkAuthority()
     {
         HttpURI httpURI = _request.getHttpURI();
         String host = _request.getHttpFields().get(HttpHeader.HOST);
         if (authorityMatches(httpURI, host))
-            return true;
+            return;
 
         HttpCompliance compliance = getHttpCompliance();
         String reason = "Authority!=Host";
@@ -907,7 +906,6 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
             throw new BadMessageException(HttpStatus.BAD_REQUEST_400, reason);
         }
         onComplianceViolation(compliance, HttpComplianceSection.NO_MISMATCHED_AUTHORITY, reason);
-        return true;
     }
 
     private boolean authorityMatches(HttpURI httpURI, String host)
@@ -951,11 +949,16 @@ public class HttpChannel implements Runnable, HttpOutput.Interceptor
             violations = new ArrayList<>();
             _request.setAttribute(HttpCompliance.VIOLATIONS_ATTR, violations);
         }
-        String record = String.format("%s (see %s) in mode %s for %s in %s",
-            violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
+        String record = formatComplianceViolation(compliance, violation, reason);
         violations.add(record);
         if (LOG.isDebugEnabled())
             LOG.debug(record);
+    }
+
+    protected String formatComplianceViolation(HttpCompliance compliance, HttpComplianceSection violation, String reason)
+    {
+        return String.format("%s (see %s) in mode %s for %s in %s",
+            violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
     }
 
     public boolean onContent(HttpInput.Content content)

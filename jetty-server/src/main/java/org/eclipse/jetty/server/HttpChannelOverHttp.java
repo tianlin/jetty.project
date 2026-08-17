@@ -335,6 +335,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                 if (_unknownExpectation)
                 {
                     badMessage(new BadMessageException(HttpStatus.EXPECTATION_FAILED_417));
+                    clearComplianceState();
                     return false;
                 }
 
@@ -359,7 +360,10 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                     getResponse().getHttpFields().add(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE);
 
                 if (_upgrade != null && upgrade())
+                {
+                    clearComplianceState();
                     return true;
+                }
 
                 break;
             }
@@ -373,10 +377,14 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
                     "*".equals(_metadata.getURI().toString()) &&
                     _fields.size() == 0 &&
                     upgrade())
+                {
+                    clearComplianceState();
                     return true;
+                }
 
                 badMessage(new BadMessageException(HttpStatus.UPGRADE_REQUIRED_426));
                 _httpConnection.getParser().close();
+                clearComplianceState();
                 return false;
             }
 
@@ -398,8 +406,7 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
         }
         finally
         {
-            _complianceViolations = null;
-            _parsingHeaders = false;
+            clearComplianceState();
         }
 
         // Should we delay dispatch until we have some content?
@@ -546,10 +553,15 @@ public class HttpChannelOverHttp extends HttpChannel implements HttpParser.Reque
 
         if (_complianceViolations == null)
             _complianceViolations = new ArrayList<>();
-        String record = String.format("%s (see %s) in mode %s for %s in %s",
-            violation.getDescription(), violation.getURL(), compliance, reason, getHttpTransport());
+        String record = formatComplianceViolation(compliance, violation, reason);
         _complianceViolations.add(record);
         if (LOG.isDebugEnabled())
             LOG.debug(record);
+    }
+
+    private void clearComplianceState()
+    {
+        _complianceViolations = null;
+        _parsingHeaders = false;
     }
 }

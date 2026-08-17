@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
@@ -134,8 +135,9 @@ public class ForwardedRequestCustomizerTest
         server.stop();
     }
 
-    @Test
-    public void testAuthorityCheckedAfterCustomization() throws Exception
+    @ParameterizedTest
+    @ValueSource(strings = {"http://origin.example/path", "http://origin.example:0/path"})
+    public void testAuthorityCheckedAfterCustomization(String requestTarget) throws Exception
     {
         AtomicBoolean handled = new AtomicBoolean();
         connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) ->
@@ -150,8 +152,8 @@ public class ForwardedRequestCustomizerTest
         };
 
         HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
-            "GET http://origin.example/path HTTP/1.1\r\n" +
-                "Host: forwarded.example\r\n" +
+            "GET " + requestTarget + " HTTP/1.1\r\n" +
+                "Host: origin.example\r\n" +
                 "Connection: close\r\n\r\n"));
 
         assertThat(response.getStatus(), is(200));
@@ -170,30 +172,6 @@ public class ForwardedRequestCustomizerTest
 
         assertThat(response.getStatus(), is(400));
         assertThat(response.getReason(), is("Authority!=Host"));
-    }
-
-    @Test
-    public void testCustomizerMayRewriteExplicitZeroPortAuthority() throws Exception
-    {
-        AtomicBoolean handled = new AtomicBoolean();
-        connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().addCustomizer((connector, configuration, request) ->
-        {
-            request.setAuthority("forwarded.example", 80);
-            request.getHttpFields().put(HttpHeader.HOST, "forwarded.example");
-        });
-        handler.requestTester = (request, response) ->
-        {
-            handled.set(true);
-            return true;
-        };
-
-        HttpTester.Response response = HttpTester.parseResponse(connector.getResponse(
-            "GET http://origin.example:0/path HTTP/1.1\r\n" +
-                "Host: origin.example\r\n" +
-                "Connection: close\r\n\r\n"));
-
-        assertThat(response.getStatus(), is(200));
-        assertTrue(handled.get());
     }
 
     @Test
